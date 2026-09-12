@@ -79,33 +79,18 @@ config.example.toml  non-secret configuration shape
 
 Status is measured against the active server tree as of 2026-09-12.
 
-| Area | Status | Current boundary |
+Percentages are working implementation estimates, not client test pass rates.
+
+| System | Status | Boundary |
 | --- | --- | --- |
-| Server module refactor | Complete for the approved scope | Domain ownership is explicit; legacy compatibility wiring is removed |
-| Authentication and launcher contract | Functional | Passwords use stdin; stale handoff grants are replaced safely |
-| Tutorial and Burst gate | Partial | Burst unlock is observed; timeline placement still needs confirmation |
-| Combat timeline and damage | In progress | Opening slot construction follows loaded data; turn ordering and damage composition remain under repair |
-| Combat effects | In progress | Effects are split into modules; 554 rules have explicit policy coverage and 8,058 definitions remain unresolved |
-| Missions and achievements | In progress | Broad catalogs exist; chapter/milestone mapping still needs behavioral certification |
-| Synthesis | In progress | 876 recipes are loaded; bulk quantity and rating edge cases remain open |
-| Navigation artifacts | Refreshed | tgrep: 457 indexed files / 26,969 trigrams; Ripwire: 132 files / 4,799 symbols / 3,738 edges |
-| Final acceptance | Pending | One integrated fresh-player/RNG pass and final client verification remain |
-
-## Engineering boundaries
-
-- Client call sites, descriptors, decoded rule data, and repeated verified
-  observations are preferred in that order when behavior is uncertain.
-- Captures and recorded responses are comparison evidence only. They are never
-  replayed, imported, or used to hardcode runtime values.
-- Existing player state is preserved. The live SQLite database is not a test
-  fixture, and private configuration never belongs in source control.
-- Checks stay scoped to the behavior changed; the extensive player simulation
-  is reserved for the final integrated tree.
-- Unknown publisher behavior remains explicit instead of being filled with
-  guessed responses or per-entity exceptions.
-
-## Deliberately deferred
-
-Publisher-owned payment, ranking, social, and event surfaces; historical
-step-up decks without authoritative source data; and non-core client content
-cleanup remain outside the current core-gameplay acceptance boundary.
+| Atelier research, collection, memoria, ships, and dispatch | 90% | Atelier domain state and dispatch routes |
+| Story, exploration, expeditions, housing, and activities | 90% | Activity and story reducers |
+| Characters, parties, energy, and progression | 90% | Character, party, energy, and progression state |
+| Gacha, shops, passes, challenges, and rewards | 85% | Gacha, shop, and reward routes |
+| Quests and battle objectives | 80% | Quest state and objective progression |
+| Tutorial Burst and timeline placement | 75% | Tutorial progression and Burst unlock |
+| Combat turn order and timeline | 55% | Battle timeline construction and advancement |
+| Damage, penetration, and combat effects | 50% | Battle stat and effect composition |
+| Missions and achievements | 60% | Mission and achievement milestone mapping |
+| Synthesis | 65% | Recipe execution, quantity, and rating |
+| Integrated acceptance | 35% | Fresh-player and installed-client verification |
