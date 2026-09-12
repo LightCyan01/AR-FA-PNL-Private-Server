@@ -780,7 +780,10 @@ impl State {
             saved.combat_effects.prepare(&state, &active.start_txid)?;
             saved.combat_effects.refresh(&self.proto, &mut state)?;
             let actor = current_actor(&state)?;
-            let number = i32_field(&state, "total_turn").ok_or(StateError::InvalidRequest)?;
+            let number = saved
+                .combat_effects
+                .next_action_number
+                .max(i32_field(&state, "total_turn").ok_or(StateError::InvalidRequest)?);
             // The client resolves the displayed decision and wave by the same action number.
             // Rebuild previews from the persisted battle, without advancing or replaying an action.
             let setup = build_action_setup(
