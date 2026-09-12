@@ -333,7 +333,24 @@ fn terminal_battle_advances_action_cursor() {
         Value::List(wave_ids.into_iter().map(Value::I32).collect()),
     );
 
-    let attack = tutorial_skill_attack(&proto, &rules, state, &txid, 1, target_id);
+    let mut request = empty_message(&proto, "blend.api.BattleAttackRequest").unwrap();
+    request.set_field_by_name("mode", Value::EnumNumber(0));
+    let mut command = empty_message(&proto, "blend.model.BattleSkillCommand").unwrap();
+    command.set_field_by_name("skill_type", Value::I32(1));
+    command.set_field_by_name("main_target_id", Value::I32(target_id));
+    request.set_field_by_name("skill_command", Value::Message(command));
+    let mut runtime = start.effects;
+    let attack = reduce_battle_attack_with_effects(
+        &proto,
+        &rules,
+        state,
+        &request,
+        b"test-secret",
+        &txid,
+        None,
+        &mut runtime,
+    )
+    .unwrap();
     let history = member_status(&attack.response, "history").unwrap();
     let action = message_list(&history, "actions")
         .into_iter()
@@ -341,6 +358,7 @@ fn terminal_battle_advances_action_cursor() {
         .unwrap();
     let action_number = i32_field(&action, "number").unwrap();
     assert_eq!(action_number, 1);
+    assert_eq!(runtime.next_action_number, action_number + 1);
     assert_eq!(i32_field(&attack.state, "total_turn"), Some(action_number + 1));
     assert_eq!(current_battle_status(&attack.state).unwrap(), BATTLE_STATUS_WON);
 }
