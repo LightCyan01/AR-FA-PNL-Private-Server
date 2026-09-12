@@ -275,6 +275,77 @@ pub(super) fn tutorial_skill_attack(
 }
 
 #[test]
+fn terminal_battle_advances_action_cursor() {
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let fresh_rules = load_fresh_rules().unwrap();
+    let rules = load_tutorial_rules().unwrap();
+    let opening = reduce_talk_event(
+        &proto,
+        &fresh_rules,
+        &rules,
+        starter_resources(&proto, &fresh_rules).unwrap(),
+        101001001,
+        1,
+    )
+    .unwrap();
+    let start = reduce_battle_start(&proto, &rules, opening.resources, 101001002, 1).unwrap();
+    let txid = start.start_txid;
+    let mut state = start.state;
+    let target_id = message_list(&state, "members")
+        .into_iter()
+        .find(|member| member_type(member).ok() == Some(1))
+        .and_then(|member| i32_field(&member, "member_id"))
+        .unwrap();
+    let mut members = message_list(&state, "members");
+    for member in members.iter_mut() {
+        if member_type(member).ok() == Some(1) {
+            if i32_field(member, "member_id") == Some(target_id) {
+                member.set_field_by_name("hp", Value::I32(1));
+            } else {
+                member.set_field_by_name("hp", Value::I32(0));
+                member.set_field_by_name("is_alive", Value::Bool(false));
+            }
+        }
+    }
+    state.set_field_by_name(
+        "members",
+        Value::List(members.into_iter().map(Value::Message).collect()),
+    );
+    let alive_ids = message_list(&state, "members")
+        .into_iter()
+        .filter(|member| bool_field(member, "is_alive"))
+        .filter_map(|member| i32_field(&member, "member_id"))
+        .collect::<Vec<_>>();
+    let mut units = message_list(&state, "timeline_units");
+    units.retain(|unit| i32_field(unit, "member_id").is_some_and(|id| alive_ids.contains(&id)));
+    state.set_field_by_name(
+        "timeline_units",
+        Value::List(units.into_iter().map(Value::Message).collect()),
+    );
+    let mut wave_ids = i32_list(&state, "wave_ids");
+    wave_ids.truncate(1);
+    state.set_field_by_name(
+        "wave_ids",
+        Value::List(wave_ids.into_iter().map(Value::I32).collect()),
+    );
+
+    let attack = tutorial_skill_attack(&proto, &rules, state, &txid, 1, target_id);
+    let history = member_status(&attack.response, "history").unwrap();
+    let action = message_list(&history, "actions")
+        .into_iter()
+        .find(|action| i32_or_enum_field(action, "actor_type") == Some(0))
+        .unwrap();
+    let action_number = i32_field(&action, "number").unwrap();
+    assert_eq!(action_number, 1);
+    assert_eq!(i32_field(&attack.state, "total_turn"), Some(action_number + 1));
+    assert_eq!(current_battle_status(&attack.state).unwrap(), BATTLE_STATUS_WON);
+}
+
+#[test]
 fn combat_vector_first_tutorial_battle_preserves_item_and_burst_boundary() {
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
