@@ -275,6 +275,87 @@ pub(super) fn tutorial_skill_attack(
 }
 
 #[test]
+fn consecutive_ally_actions_advance_action_cursor() {
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let fresh_rules = load_fresh_rules().unwrap();
+    let rules = load_tutorial_rules().unwrap();
+    let opening = reduce_talk_event(
+        &proto,
+        &fresh_rules,
+        &rules,
+        starter_resources(&proto, &fresh_rules).unwrap(),
+        101001001,
+        1,
+    )
+    .unwrap();
+    let mut resources = opening.resources;
+    let second_character = character_message(
+        &proto,
+        32201,
+        None,
+        Some(1),
+        2,
+        fresh_rules.constants.initial_character_level_limit,
+    )
+    .unwrap();
+    upsert_character(&mut resources, second_character, false);
+    let mut party_members = message_list(&resources, "party_members");
+    party_members
+        .iter_mut()
+        .find(|member| i32_field(member, "position") == Some(2))
+        .unwrap()
+        .set_field_by_name(
+            "character_id",
+            Value::Message(int32_value(&proto, 32201).unwrap()),
+        );
+    resources.set_field_by_name(
+        "party_members",
+        Value::List(party_members.into_iter().map(Value::Message).collect()),
+    );
+    let mut status = status_message(&resources).unwrap();
+    status.set_field_by_name("tutorial_step", Value::I32(TUTORIAL_STEP_SECOND_SYNTHESIS));
+    resources.set_field_by_name("status", Value::Message(status));
+    for quest_id in 101001001..=101001012 {
+        let mut quest = empty_message(&proto, "blend.model.QuestState").unwrap();
+        quest.set_field_by_name("quest_id", Value::I32(quest_id));
+        quest.set_field_by_name("clear_count", Value::I32(1));
+        upsert_quest_state(&mut resources, quest);
+    }
+    let start = reduce_battle_start(&proto, &rules, resources, 101001013, 1).unwrap();
+    let txid = start.start_txid;
+    let first_target = member_id(&earliest_living_member(&start.state, Some(1)).unwrap()).unwrap();
+    let first = tutorial_skill_attack(&proto, &rules, start.state, &txid, 1, first_target);
+    let first_history = member_status(&first.response, "history").unwrap();
+    let first_user_action = message_list(&first_history, "actions")
+        .into_iter()
+        .find(|action| i32_or_enum_field(action, "actor_type") == Some(0))
+        .unwrap();
+    let first_number = i32_field(&first_user_action, "number").unwrap();
+    assert_eq!(
+        i32_field(&first.state, "total_turn"),
+        Some(first_number + 1)
+    );
+
+    let next_actor = current_actor(&first.state).unwrap();
+    assert_eq!(member_type(&next_actor).unwrap(), 0);
+    let second_target = member_id(&earliest_living_member(&first.state, Some(1)).unwrap()).unwrap();
+    let second = tutorial_skill_attack(&proto, &rules, first.state, &txid, 1, second_target);
+    let second_history = member_status(&second.response, "history").unwrap();
+    let second_user_action = message_list(&second_history, "actions")
+        .into_iter()
+        .find(|action| i32_or_enum_field(action, "actor_type") == Some(0))
+        .unwrap();
+    assert_eq!(
+        i32_field(&second_user_action, "number"),
+        Some(first_number + 1)
+    );
+}
+
+#[test]
 fn combat_vector_first_tutorial_battle_preserves_item_and_burst_boundary() {
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
