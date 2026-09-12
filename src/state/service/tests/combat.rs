@@ -275,7 +275,7 @@ pub(super) fn tutorial_skill_attack(
 }
 
 #[test]
-fn consecutive_ally_actions_advance_action_cursor() {
+fn terminal_battle_advances_action_cursor() {
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../schemas/atelier-resleriana-2.16.0.protoset"
@@ -292,67 +292,57 @@ fn consecutive_ally_actions_advance_action_cursor() {
         1,
     )
     .unwrap();
-    let mut resources = opening.resources;
-    let second_character = character_message(
-        &proto,
-        32201,
-        None,
-        Some(1),
-        2,
-        fresh_rules.constants.initial_character_level_limit,
-    )
-    .unwrap();
-    upsert_character(&mut resources, second_character, false);
-    let mut party_members = message_list(&resources, "party_members");
-    party_members
-        .iter_mut()
-        .find(|member| i32_field(member, "position") == Some(2))
-        .unwrap()
-        .set_field_by_name(
-            "character_id",
-            Value::Message(int32_value(&proto, 32201).unwrap()),
-        );
-    resources.set_field_by_name(
-        "party_members",
-        Value::List(party_members.into_iter().map(Value::Message).collect()),
-    );
-    let mut status = status_message(&resources).unwrap();
-    status.set_field_by_name("tutorial_step", Value::I32(TUTORIAL_STEP_SECOND_SYNTHESIS));
-    resources.set_field_by_name("status", Value::Message(status));
-    for quest_id in 101001001..=101001012 {
-        let mut quest = empty_message(&proto, "blend.model.QuestState").unwrap();
-        quest.set_field_by_name("quest_id", Value::I32(quest_id));
-        quest.set_field_by_name("clear_count", Value::I32(1));
-        upsert_quest_state(&mut resources, quest);
-    }
-    let start = reduce_battle_start(&proto, &rules, resources, 101001013, 1).unwrap();
+    let start = reduce_battle_start(&proto, &rules, opening.resources, 101001002, 1).unwrap();
     let txid = start.start_txid;
-    let first_target = member_id(&earliest_living_member(&start.state, Some(1)).unwrap()).unwrap();
-    let first = tutorial_skill_attack(&proto, &rules, start.state, &txid, 1, first_target);
-    let first_history = member_status(&first.response, "history").unwrap();
-    let first_user_action = message_list(&first_history, "actions")
+    let mut state = start.state;
+    let target_id = message_list(&state, "members")
         .into_iter()
-        .find(|action| i32_or_enum_field(action, "actor_type") == Some(0))
+        .find(|member| member_type(member).ok() == Some(1))
+        .and_then(|member| i32_field(&member, "member_id"))
         .unwrap();
-    let first_number = i32_field(&first_user_action, "number").unwrap();
-    assert_eq!(
-        i32_field(&first.state, "total_turn"),
-        Some(first_number + 1)
+    let mut members = message_list(&state, "members");
+    for member in members.iter_mut() {
+        if member_type(member).ok() == Some(1) {
+            if i32_field(member, "member_id") == Some(target_id) {
+                member.set_field_by_name("hp", Value::I32(1));
+            } else {
+                member.set_field_by_name("hp", Value::I32(0));
+                member.set_field_by_name("is_alive", Value::Bool(false));
+            }
+        }
+    }
+    state.set_field_by_name(
+        "members",
+        Value::List(members.into_iter().map(Value::Message).collect()),
+    );
+    let alive_ids = message_list(&state, "members")
+        .into_iter()
+        .filter(|member| bool_field(member, "is_alive"))
+        .filter_map(|member| i32_field(&member, "member_id"))
+        .collect::<Vec<_>>();
+    let mut units = message_list(&state, "timeline_units");
+    units.retain(|unit| i32_field(unit, "member_id").is_some_and(|id| alive_ids.contains(&id)));
+    state.set_field_by_name(
+        "timeline_units",
+        Value::List(units.into_iter().map(Value::Message).collect()),
+    );
+    let mut wave_ids = i32_list(&state, "wave_ids");
+    wave_ids.truncate(1);
+    state.set_field_by_name(
+        "wave_ids",
+        Value::List(wave_ids.into_iter().map(Value::I32).collect()),
     );
 
-    let next_actor = current_actor(&first.state).unwrap();
-    assert_eq!(member_type(&next_actor).unwrap(), 0);
-    let second_target = member_id(&earliest_living_member(&first.state, Some(1)).unwrap()).unwrap();
-    let second = tutorial_skill_attack(&proto, &rules, first.state, &txid, 1, second_target);
-    let second_history = member_status(&second.response, "history").unwrap();
-    let second_user_action = message_list(&second_history, "actions")
+    let attack = tutorial_skill_attack(&proto, &rules, state, &txid, 1, target_id);
+    let history = member_status(&attack.response, "history").unwrap();
+    let action = message_list(&history, "actions")
         .into_iter()
         .find(|action| i32_or_enum_field(action, "actor_type") == Some(0))
         .unwrap();
-    assert_eq!(
-        i32_field(&second_user_action, "number"),
-        Some(first_number + 1)
-    );
+    let action_number = i32_field(&action, "number").unwrap();
+    assert_eq!(action_number, 1);
+    assert_eq!(i32_field(&attack.state, "total_turn"), Some(action_number + 1));
+    assert_eq!(current_battle_status(&attack.state).unwrap(), BATTLE_STATUS_WON);
 }
 
 #[test]

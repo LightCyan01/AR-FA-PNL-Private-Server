@@ -730,8 +730,6 @@ pub(crate) fn reduce_battle_attack_with_effects(
             action_number = action_number
                 .checked_add(1)
                 .ok_or(StateError::InvalidRequest)?;
-            // Keep the cursor ahead for consecutive ally turns.
-            state.set_field_by_name("total_turn", Value::I32(action_number));
             generated_actions += 1;
         }
         if mode == 1 {
@@ -754,6 +752,14 @@ pub(crate) fn reduce_battle_attack_with_effects(
                 let wave = i32_field(&state, "wave").unwrap_or(1);
                 let wave_ids = i32_list(&state, "wave_ids");
                 if usize::try_from(wave).unwrap_or(0) >= wave_ids.len() {
+                    let next_turn = if mode == 1 {
+                        turn_number
+                            .checked_add(1)
+                            .ok_or(StateError::InvalidRequest)?
+                    } else {
+                        action_number
+                    };
+                    state.set_field_by_name("total_turn", Value::I32(next_turn));
                     break;
                 }
                 let next_wave_number = wave + 1;
