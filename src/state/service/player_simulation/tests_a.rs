@@ -224,15 +224,56 @@ fn tutorial_clear_response_contains_the_committed_quest() {
 }
 
 #[test]
-fn resumed_battle_advertises_a_selectable_persisted_action() {
+fn resumed_battle_uses_persisted_action_cursor() {
     let mut player = Player::new();
     let start = player.call(
-        "/quest/battle/rental_party_start",
+        "/gacha/battle_start",
         player.message(
-            "blend.api.QuestBattleRentalPartyStartRequest",
-            &[("quest_id", Value::I32(1010306))],
+            "blend.api.GachaBattleStartRequest",
+            &[
+                ("gacha_id", Value::I32(2045)),
+                ("gacha_battle_id", Value::I32(22)),
+            ],
         ),
     );
+    let gauge = player.call(
+        "/battle/attack",
+        player.message(
+            "blend.api.BattleAttackRequest",
+            &[("mode", Value::EnumNumber(6))],
+        ),
+    );
+    let gauge_setup = message_list(&member_status(&gauge, "history").unwrap(), "action_setups")
+        .pop()
+        .unwrap();
+    let tool_numbers = message_list(&gauge_setup, "battle_tool_selections")
+        .into_iter()
+        .take(2)
+        .map(|tool| Value::I32(i32_field(&tool, "number").unwrap()))
+        .collect();
+    let command = player.message(
+        "blend.model.BattleBattleToolCommand",
+        &[("battle_tool_numbers", Value::List(tool_numbers))],
+    );
+    let attack = player.call(
+        "/battle/attack",
+        player.message(
+            "blend.api.BattleAttackRequest",
+            &[
+                ("mode", Value::EnumNumber(1)),
+                ("battle_tool_command", Value::Message(command)),
+            ],
+        ),
+    );
+    let attack_history = member_status(&attack, "history").unwrap();
+    let next_setup = message_list(&attack_history, "action_setups")
+        .pop()
+        .expect("tool turn must advertise the next player decision");
+    let expected_number = i32_field(&next_setup, "number").unwrap();
+    let expected_turn = i32_field(&member_status(&next_setup, "state").unwrap(), "total_turn")
+        .unwrap();
+    assert!(expected_number > expected_turn);
+
     player.reopen();
     let resume = player.read_api("/battle/resume", "blend.api.BattleResumeResponse");
     assert_eq!(
@@ -243,6 +284,11 @@ fn resumed_battle_advertises_a_selectable_persisted_action() {
     let setup = message_list(&history, "action_setups")
         .pop()
         .expect("resume must advertise the persisted player decision");
+    assert_eq!(i32_field(&setup, "number"), Some(expected_number));
+    assert_eq!(
+        i32_field(&member_status(&history, "previous_state").unwrap(), "total_turn"),
+        Some(expected_turn)
+    );
     assert!(!message_list(&setup, "skill_selections").is_empty());
     assert!(message_list(&history, "wave_starts")
         .iter()

@@ -333,7 +333,24 @@ fn terminal_battle_advances_action_cursor() {
         Value::List(wave_ids.into_iter().map(Value::I32).collect()),
     );
 
-    let attack = tutorial_skill_attack(&proto, &rules, state, &txid, 1, target_id);
+    let mut request = empty_message(&proto, "blend.api.BattleAttackRequest").unwrap();
+    request.set_field_by_name("mode", Value::EnumNumber(0));
+    let mut command = empty_message(&proto, "blend.model.BattleSkillCommand").unwrap();
+    command.set_field_by_name("skill_type", Value::I32(1));
+    command.set_field_by_name("main_target_id", Value::I32(target_id));
+    request.set_field_by_name("skill_command", Value::Message(command));
+    let mut runtime = start.effects;
+    let attack = reduce_battle_attack_with_effects(
+        &proto,
+        &rules,
+        state,
+        &request,
+        b"test-secret",
+        &txid,
+        None,
+        &mut runtime,
+    )
+    .unwrap();
     let history = member_status(&attack.response, "history").unwrap();
     let action = message_list(&history, "actions")
         .into_iter()
@@ -341,8 +358,138 @@ fn terminal_battle_advances_action_cursor() {
         .unwrap();
     let action_number = i32_field(&action, "number").unwrap();
     assert_eq!(action_number, 1);
+    assert_eq!(runtime.next_action_number, action_number + 1);
     assert_eq!(i32_field(&attack.state, "total_turn"), Some(action_number + 1));
     assert_eq!(current_battle_status(&attack.state).unwrap(), BATTLE_STATUS_WON);
+}
+
+#[test]
+fn battle_tools_preserve_action_and_turn_cursors() {
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let fresh_rules = load_fresh_rules().unwrap();
+    let rules = load_tutorial_rules().unwrap();
+    let opening = reduce_talk_event(
+        &proto,
+        &fresh_rules,
+        &rules,
+        starter_resources(&proto, &fresh_rules).unwrap(),
+        101001001,
+        1,
+    )
+    .unwrap();
+    let start = reduce_battle_start(&proto, &rules, opening.resources, 101001002, 1).unwrap();
+    let txid = start.start_txid;
+    let mut state = start.state;
+    let mut runtime = start.effects;
+    let mut tools = message_list(&state, "battle_tools");
+    let mut second_tool = tools[0].clone();
+    second_tool.set_field_by_name("number", Value::I32(2));
+    second_tool.set_field_by_name("tool_id", Value::I32(1));
+    tools.push(second_tool);
+    state.set_field_by_name(
+        "battle_tools",
+        Value::List(tools.into_iter().map(Value::Message).collect()),
+    );
+
+    let mut gauge_request = empty_message(&proto, "blend.api.BattleAttackRequest").unwrap();
+    gauge_request.set_field_by_name("mode", Value::EnumNumber(6));
+    state = reduce_battle_attack_with_effects(
+        &proto,
+        &rules,
+        state,
+        &gauge_request,
+        b"test-secret",
+        &txid,
+        None,
+        &mut runtime,
+    )
+    .unwrap()
+    .state;
+    let turn_number = i32_field(&state, "total_turn").unwrap();
+
+    let mut tool_request = empty_message(&proto, "blend.api.BattleAttackRequest").unwrap();
+    tool_request.set_field_by_name("mode", Value::EnumNumber(1));
+    let mut tool_command = empty_message(&proto, "blend.model.BattleBattleToolCommand").unwrap();
+    tool_command.set_field_by_name(
+        "battle_tool_numbers",
+        Value::List(vec![Value::I32(1), Value::I32(2)]),
+    );
+    tool_request.set_field_by_name("battle_tool_command", Value::Message(tool_command));
+    let tool_attack = reduce_battle_attack_with_effects(
+        &proto,
+        &rules,
+        state,
+        &tool_request,
+        b"test-secret",
+        &txid,
+        None,
+        &mut runtime,
+    )
+    .unwrap();
+    let history = member_status(&tool_attack.response, "history").unwrap();
+    let tool_actions = message_list(&history, "actions");
+    assert_eq!(
+        tool_actions
+            .iter()
+            .map(|action| i32_field(action, "number").unwrap())
+            .collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+    assert!(tool_actions.iter().all(|action| i32_field(
+        &member_status(action, "state").unwrap(),
+        "total_turn"
+    ) == Some(turn_number)));
+    let expected_action_number = message_list(&history, "action_setups")
+        .into_iter()
+        .last()
+        .and_then(|setup| i32_field(&setup, "number"))
+        .unwrap();
+
+    let next_turn = i32_field(&tool_attack.state, "total_turn").unwrap();
+    let target_id =
+        member_id(&earliest_living_member(&tool_attack.state, Some(1)).unwrap()).unwrap();
+    let mut skill_request = empty_message(&proto, "blend.api.BattleAttackRequest").unwrap();
+    skill_request.set_field_by_name("mode", Value::EnumNumber(0));
+    let mut skill_command = empty_message(&proto, "blend.model.BattleSkillCommand").unwrap();
+    skill_command.set_field_by_name("skill_type", Value::I32(1));
+    skill_command.set_field_by_name("main_target_id", Value::I32(target_id));
+    skill_request.set_field_by_name("skill_command", Value::Message(skill_command));
+    let next = reduce_battle_attack_with_effects(
+        &proto,
+        &rules,
+        tool_attack.state,
+        &skill_request,
+        b"test-secret",
+        &txid,
+        None,
+        &mut runtime,
+    )
+    .unwrap();
+    let actions = message_list(
+        &member_status(&next.response, "history").unwrap(),
+        "actions",
+    );
+    let action = actions
+        .iter()
+        .find(|action| i32_or_enum_field(action, "actor_type") == Some(0))
+        .unwrap();
+    assert_eq!(i32_field(action, "number"), Some(expected_action_number));
+    assert_eq!(
+        i32_field(&member_status(action, "state").unwrap(), "total_turn"),
+        Some(next_turn)
+    );
+    let enemy_action = actions
+        .iter()
+        .find(|action| i32_or_enum_field(action, "actor_type") == Some(1))
+        .unwrap();
+    assert_eq!(
+        i32_field(&member_status(enemy_action, "state").unwrap(), "total_turn"),
+        Some(next_turn + 1)
+    );
 }
 
 #[test]

@@ -452,10 +452,9 @@ pub(crate) fn reduce_battle_attack_with_effects(
     let mut setups = Vec::new();
     let mut actions = Vec::new();
     let mut wave_starts = Vec::new();
-    // `total_turn` is the number of the action the client is about to submit.
-    // The start response already establishes turn 1.
+    // Action numbers include tool actions; total_turn counts timeline turns.
     let turn_number = i32_field(&state, "total_turn").unwrap_or(1).max(1);
-    let mut action_number = turn_number;
+    let mut action_number = effect_runtime.next_action_number.max(turn_number);
     if mode == 6 {
         let actor = current_actor(&state)?;
         if member_type(&actor)? != 0 {
@@ -477,6 +476,9 @@ pub(crate) fn reduce_battle_attack_with_effects(
             Some(effect_runtime),
         )?);
     } else {
+        let mut total_turn = turn_number
+            .checked_add(1)
+            .ok_or(StateError::InvalidRequest)?;
         let actor = current_actor(&state)?;
         let actor_id = member_id(&actor)?;
         let actor_type = member_type(&actor)?;
@@ -732,18 +734,10 @@ pub(crate) fn reduce_battle_attack_with_effects(
                 .ok_or(StateError::InvalidRequest)?;
             generated_actions += 1;
         }
-        if mode == 1 {
-            state.set_field_by_name(
-                "total_turn",
-                Value::I32(
-                    turn_number
-                        .checked_add(1)
-                        .ok_or(StateError::InvalidRequest)?,
-                ),
-            );
-        }
+        state.set_field_by_name("total_turn", Value::I32(total_turn));
 
         loop {
+            state.set_field_by_name("total_turn", Value::I32(total_turn));
             let status = current_battle_status(&state)?;
             if status == BATTLE_STATUS_LOST {
                 break;
@@ -752,14 +746,6 @@ pub(crate) fn reduce_battle_attack_with_effects(
                 let wave = i32_field(&state, "wave").unwrap_or(1);
                 let wave_ids = i32_list(&state, "wave_ids");
                 if usize::try_from(wave).unwrap_or(0) >= wave_ids.len() {
-                    let next_turn = if mode == 1 {
-                        turn_number
-                            .checked_add(1)
-                            .ok_or(StateError::InvalidRequest)?
-                    } else {
-                        action_number
-                    };
-                    state.set_field_by_name("total_turn", Value::I32(next_turn));
                     break;
                 }
                 let next_wave_number = wave + 1;
@@ -769,7 +755,6 @@ pub(crate) fn reduce_battle_attack_with_effects(
                 append_wave_members(proto, rules, &mut state, wave_rule)?;
                 let battle_id = i32_field(&state, "battle_id").unwrap_or_default();
                 let panel_ids = tutorial_timeline_panels(rules, battle_id, next_wave_number)?;
-                state.set_field_by_name("total_turn", Value::I32(action_number));
                 set_timeline_panels(
                     proto,
                     &mut state,
@@ -816,7 +801,6 @@ pub(crate) fn reduce_battle_attack_with_effects(
                 }
             }
 
-            state.set_field_by_name("total_turn", Value::I32(action_number));
             let (state_change_results, disabled, killed) = effect_runtime.prepare_turn(
                 proto,
                 &mut state,
@@ -908,6 +892,9 @@ pub(crate) fn reduce_battle_attack_with_effects(
             setups.push(setup);
             if disabled || killed {
                 action_number = action_number
+                    .checked_add(1)
+                    .ok_or(StateError::InvalidRequest)?;
+                total_turn = total_turn
                     .checked_add(1)
                     .ok_or(StateError::InvalidRequest)?;
                 generated_actions += 1;
@@ -1026,7 +1013,7 @@ pub(crate) fn reduce_battle_attack_with_effects(
             )?);
             consume_timeline_panel(proto, rules, &mut state)?;
             effect_runtime.acquire_current_panel(&mut state)?;
-            state.set_field_by_name("total_turn", Value::I32(action_number));
+            state.set_field_by_name("total_turn", Value::I32(total_turn));
             refresh_burst_enable(rules, &mut state)?;
             actions.push(build_action(
                 proto,
@@ -1047,9 +1034,13 @@ pub(crate) fn reduce_battle_attack_with_effects(
             action_number = action_number
                 .checked_add(1)
                 .ok_or(StateError::InvalidRequest)?;
+            total_turn = total_turn
+                .checked_add(1)
+                .ok_or(StateError::InvalidRequest)?;
             generated_actions += 1;
         }
     }
+    effect_runtime.next_action_number = action_number;
     history.set_field_by_name("status", Value::EnumNumber(current_battle_status(&state)?));
     history.set_field_by_name(
         "action_setups",

@@ -35,6 +35,7 @@ pub(crate) struct Passive {
 #[serde(default)]
 pub(crate) struct Runtime {
     pub(crate) transaction: String,
+    pub(crate) next_action_number: i32,
     pub(crate) wave: i32,
     pub(crate) bases: BTreeMap<i32, Baseline>,
     pub(crate) instances: Vec<Instance>,

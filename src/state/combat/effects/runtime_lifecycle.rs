@@ -134,6 +134,9 @@ impl Runtime {
                 }
             }
         }
+        if self.next_action_number <= 0 {
+            self.next_action_number = i32_field(state, "total_turn").unwrap_or(1).max(1);
+        }
         self.capture(state)
     }
 
