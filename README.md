@@ -88,7 +88,7 @@ Percentages are working implementation estimates, not client test pass rates.
 | Characters, parties, energy, and progression | 90% | Character, party, energy, and progression state |
 | Gacha, shops, passes, challenges, and rewards | 85% | Gacha, shop, and reward routes |
 | Quests and battle objectives | 80% | Quest state and objective progression |
-| Combat actions, Burst, turn order, and timeline | 55% | Battle actions, Burst availability, timeline construction, and advancement |
+| Combat skills, actions, Burst, turn order, and timeline | 55% | Skill selection/execution, Burst availability, battle actions, timeline construction, and advancement |
 | Damage, penetration, and combat effects | 50% | Battle stat and effect composition |
 | Missions and achievements | 60% | Mission and achievement milestone mapping |
 | Synthesis | 65% | Recipe execution, quantity, and rating |
