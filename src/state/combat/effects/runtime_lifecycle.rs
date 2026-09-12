@@ -1,0 +1,323 @@
+use super::registry::{registry, Expiry, Rule};
+use super::runtime::{Baseline, Instance, Passive, Runtime};
+use super::runtime_match::{amount, condition, contextual_rule, selected};
+use super::runtime_results::display;
+use crate::state::combat::prelude::*;
+use std::collections::{BTreeMap, BTreeSet};
+
+impl Runtime {
+    fn register_passive(
+        &mut self,
+        source: i32,
+        source_character_id: i32,
+        source_type: i32,
+        effect: &TutorialSkillEffect,
+        leader: bool,
+    ) -> Result<(), StateError> {
+        let Some(rule) = registry()?
+            .rules
+            .iter()
+            .find(|rule| rule.id == effect.id && rule.mode == "passive")
+        else {
+            self.unsupported.insert(effect.id);
+            return Ok(());
+        };
+        let mut rule = rule.clone();
+        if leader {
+            rule.condition.remove("party_tag_id");
+        }
+        let value = amount(&rule, effect.value)?;
+        if rule.expiry == Expiry::Permanent || rule.trigger.is_some() {
+            self.passives.push(Passive {
+                source,
+                value,
+                rule,
+                source_character_id,
+                source_type,
+            });
+        } else {
+            self.managed
+                .entry(source)
+                .or_default()
+                .insert(rule.state_id);
+            self.instances.push(Instance {
+                source,
+                source_character_id,
+                target: source,
+                value,
+                remaining: rule.duration,
+                rule,
+            });
+        }
+        Ok(())
+    }
+
+    pub(crate) fn initialize(
+        proto: &ProtoRegistry,
+        state: &mut DynamicMessage,
+        transaction: &str,
+        party: &[BattlePartyMember],
+    ) -> Result<Self, StateError> {
+        let mut runtime = Self::default();
+        runtime.prepare(state, transaction)?;
+        for member in message_list(state, "members") {
+            let id = member_id(&member)?;
+            let Some(character) = message_i32_field(&member, "ally", "character_id") else {
+                continue;
+            };
+            let source_type = member_type(&member)?;
+            let Some(owner) = party.iter().find(|p| p.character_id == character) else {
+                continue;
+            };
+            for effect in &owner.passives {
+                runtime.register_passive(id, character, source_type, effect, false)?;
+            }
+            for effect in &owner.leader_passives {
+                runtime.register_passive(id, character, source_type, effect, true)?;
+            }
+        }
+        runtime.refresh(proto, state)?;
+        Ok(runtime)
+    }
+
+    pub(crate) fn prepare(
+        &mut self,
+        state: &DynamicMessage,
+        transaction: &str,
+    ) -> Result<(), StateError> {
+        if self.transaction != transaction {
+            *self = Self {
+                transaction: transaction.to_owned(),
+                ..Self::default()
+            };
+            self.capture(state)?;
+            // Older persisted battles carried these three effects directly. Import
+            // them once, subtracting their contribution from the immutable baseline.
+            for member in message_list(state, "members") {
+                let target = member_id(&member)?;
+                for change in message_list(&member, "state_changes") {
+                    let state_id = i32_field(&change, "state_change_id").unwrap_or(0);
+                    let effect = match state_id {
+                        910039 => 91001006,
+                        920004 => 3000047,
+                        920003 => 3000049,
+                        _ => continue,
+                    };
+                    let rule = registry()?
+                        .rules
+                        .iter()
+                        .find(|r| r.id == effect)
+                        .ok_or(StateError::InvalidRequest)?
+                        .clone();
+                    let value = i32_field(&change, "value").unwrap_or(0);
+                    let remaining = i32_field(&change, "rest_count").unwrap_or(0);
+                    if remaining <= 0 {
+                        continue;
+                    }
+                    if rule.summary != 0 {
+                        let base = self
+                            .bases
+                            .get_mut(&target)
+                            .ok_or(StateError::InvalidRequest)?;
+                        *base.summaries.entry(rule.summary).or_default() -= value;
+                    }
+                    self.managed.entry(target).or_default().insert(state_id);
+                    self.instances.push(Instance {
+                        source: target,
+                        source_character_id: message_i32_field(&member, "ally", "character_id")
+                            .unwrap_or_default(),
+                        target,
+                        value,
+                        remaining,
+                        rule,
+                    });
+                }
+            }
+        }
+        self.capture(state)
+    }
+
+    fn capture(&mut self, state: &DynamicMessage) -> Result<(), StateError> {
+        let wave = i32_field(state, "wave").unwrap_or(1);
+        if self.wave != 0 && self.wave != wave {
+            // Enemy IDs 11+ are reused for each replacement wave. Neither old
+            // debuffs nor an earlier enemy's base stats may follow that ID.
+            let allies: BTreeSet<_> = message_list(state, "members")
+                .iter()
+                .filter(|m| member_type(m).ok() == Some(0))
+                .filter_map(|m| i32_field(m, "member_id"))
+                .collect();
+            self.bases.retain(|id, _| allies.contains(id));
+            self.managed.retain(|id, _| allies.contains(id));
+            self.instances.retain(|i| allies.contains(&i.target));
+            self.passives.retain(|p| allies.contains(&p.source));
+            self.panel_damage_taken.retain(|id, _| allies.contains(id));
+            self.pending_actor = 0;
+            self.pending_blind_rate = 0;
+            self.pending_provocation_target = None;
+        }
+        self.wave = wave;
+        for member in message_list(state, "members") {
+            let id = member_id(&member)?;
+            if self.bases.contains_key(&id) {
+                continue;
+            }
+            let status = member_status(&member, "current_status")?;
+            let stats = status
+                .fields()
+                .filter_map(|(field, value)| value.as_i32().map(|v| (field.name().to_string(), v)))
+                .collect();
+            let summaries = message_list(&member, "state_change_summaries")
+                .iter()
+                .filter_map(|r| Some((i32_field(r, "id")?, i32_field(r, "value").unwrap_or(0))))
+                .collect();
+            self.bases.insert(id, Baseline { stats, summaries });
+        }
+        Ok(())
+    }
+
+    pub(crate) fn refresh(
+        &mut self,
+        proto: &ProtoRegistry,
+        state: &mut DynamicMessage,
+    ) -> Result<(), StateError> {
+        self.capture(state)?;
+        let snapshot = message_list(state, "members");
+        for passive in &mut self.passives {
+            if let Some(source) = snapshot
+                .iter()
+                .find(|member| i32_field(member, "member_id") == Some(passive.source))
+            {
+                // Backfill metadata for runtimes persisted before contextual
+                // passive ownership was serialized.
+                passive.source_character_id =
+                    message_i32_field(source, "ally", "character_id").unwrap_or_default();
+                passive.source_type = member_type(source)?;
+            }
+        }
+        let mut members = snapshot.clone();
+        for member in &mut members {
+            let id = member_id(member)?;
+            let base = self.bases.get(&id).ok_or(StateError::InvalidRequest)?;
+            let mut summaries = base.summaries.clone();
+            let mut stat_rates = BTreeMap::<String, i64>::new();
+            let mut visible = BTreeMap::<i32, (i32, i32)>::new();
+            let mut add = |rule: &Rule, value: i32| -> Result<(), StateError> {
+                match rule.operation.as_str() {
+                    "summary" => {
+                        let current = summaries.entry(rule.summary).or_default();
+                        *current = current
+                            .checked_add(value)
+                            .ok_or(StateError::InvalidRequest)?;
+                    }
+                    "attack" | "magic" | "defense" | "mental" | "speed" => {
+                        *stat_rates.entry(rule.operation.clone()).or_default() += i64::from(value);
+                    }
+                    "physical_taken" | "magic_taken" | "taken_down" | "attribute_taken"
+                    | "panel_disable" | "panel_convert" | "healing" | "healing_received"
+                    | "regeneration" | "negative_immunity" | "abnormal_immunity" => (), // read from the visible state by combat policy
+                    _ => return Err(StateError::InvalidRequest),
+                }
+                Ok(())
+            };
+            for passive in &self.passives {
+                if let Some(source) = snapshot
+                    .iter()
+                    .find(|m| i32_field(m, "member_id") == Some(passive.source))
+                {
+                    if bool_field(source, "is_alive")
+                        && condition(&passive.rule, source)
+                        && selected(&passive.rule, source, member, &[])
+                    {
+                        if passive.rule.trigger.is_none()
+                            && matches!(
+                                passive.rule.operation.as_str(),
+                                "physical_taken"
+                                    | "magic_taken"
+                                    | "taken_down"
+                                    | "healing"
+                                    | "healing_received"
+                                    | "negative_immunity"
+                                    | "abnormal_immunity"
+                            )
+                        {
+                            let entry = visible.entry(passive.rule.state_id).or_default();
+                            entry.0 = entry
+                                .0
+                                .checked_add(passive.value)
+                                .ok_or(StateError::InvalidRequest)?;
+                            entry.1 = -1;
+                            self.managed
+                                .entry(id)
+                                .or_default()
+                                .insert(passive.rule.state_id);
+                        } else if !contextual_rule(&passive.rule) {
+                            add(&passive.rule, passive.value)?;
+                        }
+                    }
+                }
+            }
+            for active in self.instances.iter().filter(|i| i.target == id) {
+                // Trigger predicates select the attack that creates an instance;
+                // once it exists, its client-visible state is unconditional until
+                // expiry. Non-trigger contextual rules remain formula-only.
+                if !contextual_rule(&active.rule) || active.rule.trigger.is_some() {
+                    add(&active.rule, active.value)?;
+                }
+                let entry = visible.entry(active.rule.state_id).or_default();
+                entry.0 = entry
+                    .0
+                    .checked_add(active.value)
+                    .ok_or(StateError::InvalidRequest)?;
+                entry.1 = if active.remaining < 0 || entry.1 < 0 {
+                    -1
+                } else {
+                    entry.1.max(active.remaining)
+                };
+            }
+            let mut status = member_status(member, "current_status")?;
+            for (name, base_value) in &base.stats {
+                let rate =
+                    (10_000 + stat_rates.get(name).copied().unwrap_or(0)).clamp(0, 1_000_000);
+                let value = i64::from(*base_value) * rate / 10_000;
+                status.set_field_by_name(
+                    name,
+                    Value::I32(
+                        i32::try_from(value.max(1)).map_err(|_| StateError::InvalidRequest)?,
+                    ),
+                );
+            }
+            member.set_field_by_name("current_status", Value::Message(status));
+            let summaries = summaries
+                .into_iter()
+                .filter(|(_, v)| *v != 0)
+                .map(|(id, value)| {
+                    let mut summary = empty_message(proto, "blend.model.BattleStateChangeSummary")?;
+                    summary.set_field_by_name("id", Value::I32(id));
+                    summary.set_field_by_name("value", Value::I32(value));
+                    Ok(Value::Message(summary))
+                })
+                .collect::<Result<Vec<_>, StateError>>()?;
+            member.set_field_by_name("state_change_summaries", Value::List(summaries));
+            let mut changes = message_list(member, "state_changes");
+            changes.retain(|r| {
+                !self
+                    .managed
+                    .get(&id)
+                    .is_some_and(|ids| ids.contains(&i32_field(r, "state_change_id").unwrap_or(0)))
+            });
+            for (state_id, (value, remaining)) in visible {
+                changes.push(display(proto, state_id, value, remaining)?);
+            }
+            member.set_field_by_name(
+                "state_changes",
+                Value::List(changes.into_iter().map(Value::Message).collect()),
+            );
+        }
+        state.set_field_by_name(
+            "members",
+            Value::List(members.into_iter().map(Value::Message).collect()),
+        );
+        Ok(())
+    }
+}

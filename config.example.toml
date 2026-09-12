@@ -1,0 +1,55 @@
+# Copy to a private, uncommitted config file and adjust local paths.
+# This template contains no credentials, device values, account IDs, or tokens.
+
+[api]
+bind = "127.0.0.1:18080"
+
+[assets]
+bind = "127.0.0.1:18765"
+url_prefix = "/asset/1787706536_QVzMLXDQ2KLO9bgR/StandaloneWindows64/"
+
+[versions]
+client = "2.16.0"
+asset = "1787706536_QVzMLXDQ2KLO9bgR"
+master_data = "1787730744__RjK13fBy4f67c4c"
+terms_of_service = "2026_08_27"
+privacy_policy = ""
+enforce = true
+
+[paths]
+protoset = "../schemas/atelier-resleriana-2.16.0.protoset"
+master_data = "../data/master_data.pb"
+master_data_download = "../data/masterdata.jp.encoded"
+master_data_decoded = "../data/masterdata.jp.decoded"
+manifest = "F:/SteamLibrary/steamapps/common/AtelierResleriana/AtelierResleriana_Data/ABCache/manifest.json"
+catalog = "F:/SteamLibrary/steamapps/common/AtelierResleriana/AtelierResleriana_Data/StreamingAssets/aa/catalog.json"
+asset_root = "F:/SteamLibrary/steamapps/common/AtelierResleriana/AtelierResleriana_Data/ABCache/Bundles"
+embedded_bundle_root = "F:/SteamLibrary/steamapps/common/AtelierResleriana/AtelierResleriana_Data/StreamingAssets/aa/Embed"
+remote_bundle_root = "../data/remote_bundles"
+
+[storage]
+path = "./atelier.sqlite3"
+
+[session]
+ttl_seconds = 86400
+
+[transport]
+# Direct encrypted protobuf responses are the initial response mode. Gzip is
+# optional and should be enabled only after a private-client check requires it.
+gzip_responses = false
+# Pairing of request/response prefixes is not proven. Keep the policy explicit.
+response_prefix_policy = "random"
+
+[logging]
+level = "info"
+format = "json"
+redact = true
+
+[account]
+# The process reads the device-binding secret from this environment-variable
+# name at runtime. Never place the secret itself in this file or source control.
+device_binding_secret_env = "ATELIER_SERVER_SECRET"
+handoff_ttl_seconds = 600
+
+[payment]
+provider_url = ""

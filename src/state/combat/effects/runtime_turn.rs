@@ -1,0 +1,298 @@
+use super::registry::Expiry;
+use super::runtime::{Instance, Runtime};
+use super::runtime_match::{condition, context_matches, selected};
+use super::runtime_results::{effect_result, turn_state_change_result};
+use crate::state::combat::prelude::*;
+use std::collections::BTreeSet;
+
+impl Runtime {
+    pub(crate) fn blind_rate(&self, actor: i32) -> i32 {
+        (self.pending_actor == actor)
+            .then_some(self.pending_blind_rate)
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn provocation_target(&self, actor: i32) -> Option<i32> {
+        (self.pending_actor == actor)
+            .then_some(self.pending_provocation_target)
+            .flatten()
+    }
+
+    pub(crate) fn prepare_turn(
+        &mut self,
+        proto: &ProtoRegistry,
+        state: &mut DynamicMessage,
+        actor: i32,
+        secret: &[u8],
+        start_txid: &str,
+        action_number: i32,
+    ) -> Result<(Vec<DynamicMessage>, bool, bool), StateError> {
+        if self.pending_actor == actor {
+            return Ok((Vec::new(), false, false));
+        }
+        let mut members = message_list(state, "members");
+        let actor_index = members
+            .iter()
+            .position(|member| i32_field(member, "member_id") == Some(actor))
+            .ok_or(StateError::InvalidRequest)?;
+        let maximum_hp = i64::from(
+            i32_field(&members[actor_index], "max_hp")
+                .ok_or(StateError::InvalidRequest)?
+                .max(1),
+        );
+        let snapshot = members.clone();
+        let mut hp = i32_field(&members[actor_index], "hp")
+            .ok_or(StateError::InvalidRequest)?
+            .max(0);
+        let mut blind_rate = 0;
+        let mut provocation_target = None;
+        let mut disabled = false;
+        let mut results = Vec::new();
+        let mut retained = Vec::new();
+        for (index, mut change) in message_list(&members[actor_index], "state_changes")
+            .into_iter()
+            .enumerate()
+        {
+            let state_id = i32_field(&change, "state_change_id").unwrap_or_default();
+            let value = i32_field(&change, "value").unwrap_or_default();
+            let remaining = i32_field(&change, "rest_count").unwrap_or_default();
+            let handled = matches!(
+                state_id,
+                910037 | 940001 | 940002 | 940005 | 940006 | 940007
+            );
+            if state_id == 910037 {
+                let heal = if value > 0 {
+                    (maximum_hp.saturating_mul(i64::from(value)) / 10_000).max(1)
+                } else {
+                    0
+                };
+                let heal = i32::try_from(heal).unwrap_or(i32::MAX);
+                hp = hp.saturating_add(heal).min(maximum_hp as i32);
+                results.push(turn_state_change_result(
+                    proto, actor, state_id, 0, heal, false,
+                )?);
+            } else if matches!(state_id, 940006 | 940007) {
+                let damage = if value > 0 {
+                    (maximum_hp.saturating_mul(i64::from(value)) / 10_000).max(1)
+                } else {
+                    0
+                };
+                hp = hp
+                    .saturating_sub(i32::try_from(damage).unwrap_or(i32::MAX))
+                    .max(0);
+                results.push(turn_state_change_result(
+                    proto, actor, state_id, damage, 0, false,
+                )?);
+            } else if state_id == 940005 {
+                if deterministic_roll(
+                    secret,
+                    start_txid,
+                    action_number,
+                    b"paralysis",
+                    actor,
+                    u32::try_from(index).unwrap_or(u32::MAX),
+                ) % 10_000
+                    < value.clamp(0, 10_000) as u32
+                {
+                    disabled = true;
+                    results.push(turn_state_change_result(
+                        proto, actor, state_id, 0, 0, true,
+                    )?);
+                }
+            } else if state_id == 940002 {
+                blind_rate = blind_rate.max(value);
+            } else if state_id == 940001 {
+                provocation_target = optional_i32_field(&change, "target_id").filter(|target| {
+                    snapshot.iter().any(|member| {
+                        i32_field(member, "member_id") == Some(*target)
+                            && bool_field(member, "is_alive")
+                    })
+                });
+            }
+            if handled && remaining > 0 {
+                change.set_field_by_name("rest_count", Value::I32(remaining - 1));
+            }
+            if !handled || remaining < 0 || remaining > 1 {
+                retained.push(change);
+            }
+        }
+        let killed = hp == 0;
+        members[actor_index].set_field_by_name("hp", Value::I32(hp));
+        members[actor_index].set_field_by_name("is_alive", Value::Bool(!killed));
+        members[actor_index].set_field_by_name(
+            "state_changes",
+            Value::List(retained.into_iter().map(Value::Message).collect()),
+        );
+        state.set_field_by_name(
+            "members",
+            Value::List(members.into_iter().map(Value::Message).collect()),
+        );
+        self.pending_actor = actor;
+        self.pending_blind_rate = blind_rate.clamp(0, 10_000);
+        self.pending_provocation_target = provocation_target;
+        Ok((results, disabled, killed))
+    }
+
+    fn finish_turn(&mut self, actor: i32) {
+        if self.pending_actor == actor {
+            self.pending_actor = 0;
+            self.pending_blind_rate = 0;
+            self.pending_provocation_target = None;
+        }
+    }
+
+    pub(crate) fn expire(
+        &mut self,
+        actor: i32,
+        results: &[DynamicMessage],
+        consumes_turn: bool,
+        attack: bool,
+    ) {
+        let hits: BTreeSet<_> = results
+            .iter()
+            .filter(|r| attack && !bool_field(r, "is_miss") && !bool_field(r, "is_invalid"))
+            .filter_map(|r| i32_field(r, "target_id"))
+            .collect();
+        for instance in &mut self.instances {
+            let tick = match instance.rule.expiry {
+                Expiry::Turn => consumes_turn && instance.target == actor,
+                Expiry::Attack => attack && consumes_turn && instance.target == actor,
+                Expiry::Hit => hits.contains(&instance.target),
+                Expiry::Permanent => false,
+            };
+            if tick && instance.remaining > 0 {
+                instance.remaining -= 1;
+            }
+        }
+        self.instances.retain(|i| i.remaining != 0);
+        for target in hits {
+            self.panel_damage_taken.remove(&target);
+        }
+        if consumes_turn {
+            self.finish_turn(actor);
+        }
+    }
+
+    pub(crate) fn acquire_current_panel(
+        &mut self,
+        state: &mut DynamicMessage,
+    ) -> Result<(), StateError> {
+        if current_battle_status(state)? != BATTLE_STATUS_IN_BATTLE {
+            return Ok(());
+        }
+        let wave = i32_field(state, "wave").unwrap_or(1);
+        let turn = message_list(state, "timeline_panels")
+            .first()
+            .and_then(|panel| i32_field(panel, "turn"))
+            .ok_or(StateError::InvalidRequest)?;
+        if self.acquired_panel_wave == wave && self.acquired_panel_turn == turn {
+            return Ok(());
+        }
+        self.acquired_panel_wave = wave;
+        self.acquired_panel_turn = turn;
+        let actor_type = member_type(&current_actor(state)?)?;
+        let panel_id = effective_battle_panel_id(state);
+        let mut members = message_list(state, "members");
+        for member in members.iter_mut().filter(|member| {
+            member_type(member).ok() == Some(actor_type) && bool_field(member, "is_alive")
+        }) {
+            let id = member_id(member)?;
+            if matches!(panel_id, 33 | 36) {
+                let delta = if panel_id == 33 { -4_000 } else { 4_000 };
+                self.panel_damage_taken
+                    .entry(id)
+                    .and_modify(|value| *value = value.saturating_add(delta))
+                    .or_insert(delta);
+            } else if panel_id == 42 {
+                let hp = i32_field(member, "hp").unwrap_or(0).max(0);
+                let max_hp = i32_field(member, "max_hp").unwrap_or(0).max(0);
+                member
+                    .set_field_by_name("hp", Value::I32(hp.saturating_add(max_hp / 4).min(max_hp)));
+            }
+        }
+        state.set_field_by_name(
+            "members",
+            Value::List(members.into_iter().map(Value::Message).collect()),
+        );
+        Ok(())
+    }
+
+    pub(crate) fn trigger_attack_after(
+        &mut self,
+        proto: &ProtoRegistry,
+        state: &mut DynamicMessage,
+        source_id: i32,
+        skill: &TutorialSkill,
+        results: &[DynamicMessage],
+    ) -> Result<Vec<DynamicMessage>, StateError> {
+        if skill.skill_effect_type != 1 {
+            return Ok(Vec::new());
+        }
+        let members = message_list(state, "members");
+        let source = members
+            .iter()
+            .find(|member| i32_field(member, "member_id") == Some(source_id))
+            .ok_or(StateError::InvalidRequest)?;
+        let source_character_id =
+            message_i32_field(source, "ally", "character_id").unwrap_or_default();
+        let hit_results = results
+            .iter()
+            .filter(|result| !bool_field(result, "is_miss") && !bool_field(result, "is_invalid"));
+        let mut triggered = Vec::new();
+        for passive in self.passives.clone().into_iter().filter(|passive| {
+            passive.source == source_id && passive.rule.trigger.as_deref() == Some("attack_after")
+        }) {
+            for result in hit_results.clone() {
+                let Some(target_id) = i32_field(result, "target_id") else {
+                    continue;
+                };
+                let Some(target) = members
+                    .iter()
+                    .find(|member| i32_field(member, "member_id") == Some(target_id))
+                else {
+                    continue;
+                };
+                if !bool_field(target, "is_alive")
+                    || !context_matches(
+                        &passive.rule,
+                        source_character_id,
+                        skill,
+                        bool_field(result, "is_critical"),
+                    )
+                    || !selected(&passive.rule, source, target, &[target_id])
+                    || !condition(&passive.rule, source)
+                {
+                    continue;
+                }
+                self.instances.retain(|instance| {
+                    !(instance.source == source_id
+                        && instance.target == target_id
+                        && instance.rule.id == passive.rule.id)
+                });
+                self.instances.push(Instance {
+                    source: source_id,
+                    source_character_id,
+                    target: target_id,
+                    value: passive.value,
+                    remaining: passive.rule.duration,
+                    rule: passive.rule.clone(),
+                });
+                self.managed
+                    .entry(target_id)
+                    .or_default()
+                    .insert(passive.rule.state_id);
+                triggered.push(effect_result(
+                    proto,
+                    passive.rule.id,
+                    source_id,
+                    target_id,
+                    true,
+                    &passive.rule,
+                    passive.value,
+                )?);
+            }
+        }
+        self.refresh(proto, state)?;
+        Ok(triggered)
+    }
+}

@@ -1,0 +1,57 @@
+# Rust build output and compiler artifacts
+/target/
+/debug/
+**/*.rs.bk
+**/mutants.out*/
+*.pdb
+*.dSYM/
+*.rlib
+*.rmeta
+*.obj
+*.o
+
+# Local tools and generated navigation artifacts
+/tgrep.exe
+/.tgrep/
+/atelier-ripwire-*.txt
+/*.exe
+
+# Private runtime state and configuration
+/atelier.sqlite3*
+/config.toml
+/.env
+/.env.*
+*.sqlite
+*.sqlite3
+*.db
+*.pem
+*.key
+*.secret
+*.token
+
+# Logs, crash output, and temporary files
+*.log
+/logs/
+/crash/
+/dumps/
+/tmp/
+*.tmp
+*.temp
+*.bak
+*.orig
+
+# Local tooling/cache directories
+/.agents/
+/.claude/
+/.serena/
+/.unlazy/
+__pycache__/
+.pytest_cache/
+
+# Editors and operating-system files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
