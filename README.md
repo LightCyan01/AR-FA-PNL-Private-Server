@@ -89,7 +89,7 @@ Percentages are working implementation estimates, not client test pass rates.
 | Gacha, shops, passes, challenges, and rewards | 85% | Gacha, shop, and reward routes |
 | Quests and battle objectives | 80% | Quest state and objective progression |
 | Combat skills, actions, Burst, turn order, and timeline | 70% | Skill selection/execution, Burst availability and placement, independent action/turn cursors, timeline construction, and advancement |
-| Damage, penetration, and combat effects | 60% | Base-stat composition, damage policy, penetration, and effect application |
+| Damage, penetration, and combat effects | 65% | Base-stat composition, damage policy, penetration, hidden enemy defense modifiers, and effect application |
 | Missions and achievements | 60% | Mission and achievement milestone mapping |
 | Synthesis | 65% | Recipe execution, quantity, and rating |
 | Integrated acceptance | 35% | Fresh-player and installed-client verification |
