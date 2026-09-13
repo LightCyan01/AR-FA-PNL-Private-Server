@@ -38,6 +38,8 @@ pub(crate) struct Runtime {
     pub(crate) next_action_number: i32,
     pub(crate) wave: i32,
     pub(crate) bases: BTreeMap<i32, Baseline>,
+    #[serde(skip)]
+    pub(crate) stat_rates: BTreeMap<i32, BTreeMap<String, i64>>,
     pub(crate) instances: Vec<Instance>,
     pub(crate) passives: Vec<Passive>,
     pub(crate) managed: BTreeMap<i32, BTreeSet<i32>>,
@@ -48,4 +50,14 @@ pub(crate) struct Runtime {
     pub(crate) pending_actor: i32,
     pub(crate) pending_blind_rate: i32,
     pub(crate) pending_provocation_target: Option<i32>,
+}
+
+impl Runtime {
+    pub(crate) fn stat_rate(&self, member_id: i32, name: &str) -> i64 {
+        self.stat_rates
+            .get(&member_id)
+            .and_then(|rates| rates.get(name))
+            .copied()
+            .unwrap_or_default()
+    }
 }

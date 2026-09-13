@@ -436,3 +436,97 @@ fn common_active_modifiers_change_only_their_declared_buckets() {
         Some(2)
     );
 }
+
+#[test]
+fn enemy_defense_down_reaches_hidden_damage_defense() {
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let rules = load_tutorial_rules().unwrap();
+    let (wave, wave_enemy) = rules
+        .waves
+        .iter()
+        .find_map(|wave| {
+            wave.enemies
+                .iter()
+                .find(|enemy| !matches!(enemy.id, 80001050 | 80001051))
+                .map(|enemy| (wave, enemy))
+        })
+        .unwrap();
+    let status = battle_status_message(
+        &proto,
+        BattleStats {
+            hp: 100,
+            speed: 100,
+            attack: 100,
+            magic: 100,
+            defense: 100,
+            mental: 100,
+        },
+    )
+    .unwrap();
+    let mut attacker = empty_message(&proto, "blend.model.BattleMember").unwrap();
+    attacker.set_field_by_name("member_id", Value::I32(1));
+    attacker.set_field_by_name("type", Value::EnumNumber(0));
+    attacker.set_field_by_name("is_alive", Value::Bool(true));
+    attacker.set_field_by_name("current_status", Value::Message(status.clone()));
+    attacker.set_field_by_name("initial_status", Value::Message(status));
+    let enemy = build_enemy_member(&proto, &rules, wave_enemy, wave.id, 11, 1).unwrap();
+    let mut state = empty_message(&proto, "blend.model.BattleState").unwrap();
+    state.set_field_by_name("wave", Value::I32(1));
+    state.set_field_by_name(
+        "members",
+        Value::List(vec![
+            Value::Message(attacker.clone()),
+            Value::Message(enemy.clone()),
+        ]),
+    );
+    let skill = TutorialSkill {
+        id: 1,
+        skill_type: 1,
+        skill_effect_type: 1,
+        skill_power_type: 1,
+        wait: 100,
+        power: 100,
+        break_power: 0,
+        break_power_type: 1,
+        attack_attributes: vec![1],
+        skill_target_type: Some(3),
+        effects: Vec::new(),
+        state_change_application_rate: 10_000,
+        hp_damage_bonus: None,
+    };
+    let mut runtime = Runtime::default();
+    runtime.prepare(&state, "enemy-defense-down").unwrap();
+    runtime.refresh(&proto, &mut state).unwrap();
+    let (_, base_defense, _) =
+        member_offense_and_defense(&proto, &rules, &attacker, &enemy, Some(&runtime), &skill)
+            .unwrap();
+
+    runtime
+        .apply(
+            &proto,
+            &mut state,
+            1,
+            &[TutorialSkillEffect {
+                id: 71045007,
+                value: 2_000,
+            }],
+            &[11],
+            true,
+            "after",
+            None,
+        )
+        .unwrap();
+    let enemy = message_list(&state, "members")
+        .into_iter()
+        .find(|member| member_id(member).ok() == Some(11))
+        .unwrap();
+    let (_, reduced_defense, _) =
+        member_offense_and_defense(&proto, &rules, &attacker, &enemy, Some(&runtime), &skill)
+            .unwrap();
+
+    assert_eq!(reduced_defense, (base_defense * 8 / 10).max(1));
+}

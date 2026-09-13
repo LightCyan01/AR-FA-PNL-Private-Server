@@ -199,6 +199,7 @@ impl Runtime {
             }
         }
         let mut members = snapshot.clone();
+        self.stat_rates.clear();
         for member in &mut members {
             let id = member_id(member)?;
             let base = self.bases.get(&id).ok_or(StateError::InvalidRequest)?;
@@ -291,6 +292,7 @@ impl Runtime {
                 );
             }
             member.set_field_by_name("current_status", Value::Message(status));
+            self.stat_rates.insert(id, stat_rates);
             let summaries = summaries
                 .into_iter()
                 .filter(|(_, v)| *v != 0)
