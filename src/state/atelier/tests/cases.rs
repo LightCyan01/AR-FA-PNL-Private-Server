@@ -24,6 +24,82 @@ fn add_memoria(
 }
 
 #[test]
+fn combat_stats_combine_base_rates_before_flat_growth() {
+    let proto = proto();
+    let mut rules = load_rules().unwrap();
+    rules.research = vec![ResearchRule {
+        group_id: 1,
+        level: 1,
+        minimum_character_level: None,
+        cost: RuleCost {
+            id: 1,
+            quantity: 0,
+            resource_type: 5,
+        },
+        requirements: Vec::new(),
+        research_effect_ids: vec![1],
+        start_at: None,
+    }];
+    rules.research_effect_levels = vec![ResearchEffectLevel {
+        research_effect_id: 1,
+        level: 1,
+        value: 1_000,
+        status_buffs: vec![ResearchStatusBuff {
+            role: 1,
+            status_type: 1,
+        }],
+        equipment_tool_buffs: Vec::new(),
+    }];
+    rules.emblem_rarities = vec![EmblemRarityRule {
+        emblem_id: 1,
+        rarity: 1,
+        value: 500,
+        status_buffs: vec![ResearchStatusBuff {
+            role: 1,
+            status_type: 1,
+        }],
+        equipment_tool_buffs: Vec::new(),
+    }];
+
+    let mut resources = empty_message(&proto, "blend.model.Resources").unwrap();
+    let mut research = empty_message(&proto, "blend.model.ResearchGroup").unwrap();
+    research.set_field_by_name("group_id", Value::I32(1));
+    research.set_field_by_name("level", Value::I32(1));
+    resources.set_field_by_name(
+        "research_groups",
+        Value::List(vec![Value::Message(research)]),
+    );
+    let mut emblem = empty_message(&proto, "blend.model.Emblem").unwrap();
+    emblem.set_field_by_name("emblem_id", Value::I32(1));
+    emblem.set_field_by_name("rarity", Value::I32(1));
+    resources.set_field_by_name("emblems", Value::List(vec![Value::Message(emblem)]));
+
+    let mut character = empty_message(&proto, "blend.model.Character").unwrap();
+    character.set_field_by_name("growboard_hp", Value::I32(100));
+    character.set_field_by_name("growboard_all_status_rate", Value::I32(300));
+    let member = empty_message(&proto, "blend.model.PartyMember").unwrap();
+    let (stats, _) = combat_stats(
+        &rules,
+        &resources,
+        &character,
+        &member,
+        1,
+        BattleStats {
+            hp: 1_000,
+            speed: 100,
+            attack: 100,
+            magic: 100,
+            defense: 100,
+            mental: 100,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(stats.hp, 1_280);
+    assert_eq!(stats.speed, 100);
+}
+
+#[test]
 fn complete_atelier_player_simulation() {
     let proto = proto();
     let fresh = load_fresh_rules().unwrap();

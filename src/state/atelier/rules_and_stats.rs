@@ -8,6 +8,7 @@ pub(crate) struct AtelierRules {
     pub(crate) constants: AtelierConstants,
     pub(crate) research: Vec<ResearchRule>,
     pub(crate) research_effect_levels: Vec<ResearchEffectLevel>,
+    pub(crate) emblem_rarities: Vec<EmblemRarityRule>,
     pub(crate) communications: Vec<CommunicationRule>,
     pub(crate) illustrated_books: Vec<IllustratedBookRule>,
     pub(crate) collection_memoria: Vec<CollectionRule>,
@@ -74,6 +75,15 @@ pub(crate) struct ResearchStatusBuff {
 #[derive(Clone, Deserialize)]
 pub(crate) struct ResearchEquipmentBuff {
     pub(crate) status_type: i32,
+}
+
+#[derive(Clone, Deserialize)]
+pub(crate) struct EmblemRarityRule {
+    pub(crate) emblem_id: i32,
+    pub(crate) rarity: i32,
+    pub(crate) value: i32,
+    pub(crate) status_buffs: Vec<ResearchStatusBuff>,
+    pub(crate) equipment_tool_buffs: Vec<ResearchEquipmentBuff>,
 }
 
 #[derive(Clone, Deserialize)]
@@ -231,6 +241,7 @@ pub(crate) fn load_rules() -> Result<AtelierRules, StateError> {
     .map_err(|error| StateError::MasterData(error.to_string()))?;
     if rules.format_name != "atelier-systems-v1"
         || rules.research.is_empty()
+        || rules.emblem_rarities.is_empty()
         || rules.communications.is_empty()
         || rules.memorias.is_empty()
         || rules.ship_levels.is_empty()
@@ -320,6 +331,15 @@ pub(crate) fn combat_stats(
     role: i32,
     mut stats: BattleStats,
 ) -> Result<(BattleStats, Vec<TutorialSkillEffect>), StateError> {
+    let mut rates = BattleStats {
+        hp: 0,
+        speed: 0,
+        attack: 0,
+        magic: 0,
+        defense: 0,
+        mental: 0,
+    };
+    let mut flats = rates;
     for (field, status_type) in [
         ("growboard_hp", 1),
         ("growboard_speed", 2),
@@ -329,7 +349,7 @@ pub(crate) fn combat_stats(
         ("growboard_mental", 6),
     ] {
         add_stat(
-            &mut stats,
+            &mut flats,
             status_type,
             i32_field(character, field).unwrap_or_default(),
         )?;
@@ -338,10 +358,10 @@ pub(crate) fn combat_stats(
     let research = active_research_effects(rules, resources);
     for effect in &research {
         for buff in effect.status_buffs.iter().filter(|buff| buff.role == role) {
-            add_stat(&mut stats, buff.status_type, effect.value)?;
+            add_stat(&mut rates, buff.status_type, effect.value)?;
         }
     }
-    let equipment_rates: BTreeMap<i32, i32> = research
+    let mut equipment_rates: BTreeMap<i32, i32> = research
         .iter()
         .flat_map(|effect| {
             effect
@@ -353,6 +373,23 @@ pub(crate) fn combat_stats(
             *values.entry(status).or_default() += value;
             values
         });
+    for emblem in message_list(resources, "emblems") {
+        let Some(rule) = rules.emblem_rarities.iter().find(|row| {
+            i32_field(&emblem, "emblem_id") == Some(row.emblem_id)
+                && i32_field(&emblem, "rarity") == Some(row.rarity)
+        }) else {
+            continue;
+        };
+        for buff in rule.status_buffs.iter().filter(|buff| buff.role == role) {
+            add_stat(&mut rates, buff.status_type, rule.value)?;
+        }
+        for buff in &rule.equipment_tool_buffs {
+            let value = equipment_rates.entry(buff.status_type).or_default();
+            *value = value
+                .checked_add(rule.value)
+                .ok_or(StateError::InvalidRequest)?;
+        }
+    }
 
     let mut passives = Vec::new();
     for field in [
@@ -383,7 +420,7 @@ pub(crate) fn combat_stats(
                 .copied()
                 .unwrap_or_default();
             add_stat(
-                &mut stats,
+                &mut flats,
                 buff.status_type,
                 i32::try_from(i64::from(buff.value) * i64::from(10_000 + rate) / 10_000)
                     .map_err(|_| StateError::InvalidRequest)?,
@@ -445,7 +482,7 @@ pub(crate) fn combat_stats(
                 .and_then(|row| row.values.get(level - 1))
                 .copied()
                 .unwrap_or_default();
-            scale_stat(&mut stats, buff.status_type, initial + growth)?;
+            add_stat(&mut rates, buff.status_type, initial + growth)?;
         }
         if let Some(effects) = memoria.rank_ability_effects.get(limit_break) {
             passives.extend(effects.iter().map(|e| TutorialSkillEffect {
@@ -465,14 +502,13 @@ pub(crate) fn combat_stats(
         });
     for (field, status_type) in [
         ("hp", 1),
-        ("speed", 2),
         ("attack", 3),
         ("magic", 4),
         ("defense", 5),
         ("mental", 6),
     ] {
-        scale_stat(
-            &mut stats,
+        add_stat(
+            &mut rates,
             status_type,
             all_rate
                 + role_rate
@@ -480,6 +516,17 @@ pub(crate) fn combat_stats(
                     .and_then(|rate| i32_field(rate, field))
                     .unwrap_or_default(),
         )?;
+    }
+    for (status_type, rate, flat) in [
+        (1, rates.hp, flats.hp),
+        (2, rates.speed, flats.speed),
+        (3, rates.attack, flats.attack),
+        (4, rates.magic, flats.magic),
+        (5, rates.defense, flats.defense),
+        (6, rates.mental, flats.mental),
+    ] {
+        scale_stat(&mut stats, status_type, rate)?;
+        add_stat(&mut stats, status_type, flat)?;
     }
     Ok((stats, passives))
 }
