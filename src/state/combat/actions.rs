@@ -255,7 +255,6 @@ pub(crate) fn build_battle_tool_selections(
     runtime: Option<&effects::Runtime>,
 ) -> Result<Vec<DynamicMessage>, StateError> {
     let members = message_list(state, "members");
-    let actor = current_actor(state)?;
     let mut selections = Vec::new();
     for tool_message in message_list(state, "battle_tools") {
         if i32_field(&tool_message, "usage_count").unwrap_or_default() <= 0 {
@@ -279,7 +278,8 @@ pub(crate) fn build_battle_tool_selections(
             if skill.skill_effect_type == 2 {
                 let hp = i32_field(target, "hp").unwrap_or_default().max(0);
                 let max_hp = i32_field(target, "max_hp").unwrap_or_default().max(0);
-                let heal = policy_tool_heal(rules, &tool, skill, &actor, target)?.min(max_hp - hp);
+                let source = current_actor(state)?;
+                let heal = policy_tool_heal(rules, &tool, skill, &source, target)?.min(max_hp - hp);
                 preview.set_field_by_name("hp_heal", Value::Message(wrapper_i32(proto, heal)?));
             } else if skill.skill_effect_type == 1 {
                 let broken = target.has_field_by_name("enemy")
