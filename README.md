@@ -77,7 +77,7 @@ config.example.toml  non-secret configuration shape
 
 ## Current progress
 
-Status is measured against the active server tree as of 2026-09-12.
+Status is measured against the active server tree as of 2026-09-13.
 
 Percentages are working implementation estimates, not client test pass rates.
 
@@ -93,3 +93,8 @@ Percentages are working implementation estimates, not client test pass rates.
 | Missions and achievements | 65% | Mission counter reconciliation; chapter milestone mapping and live awards |
 | Synthesis | 65% | Recipe execution, quantity, and rating |
 | Integrated acceptance | 35% | Fresh-player and installed-client verification |
+
+The supported combat damage/effect policy paths were reviewed and merged in
+[PR #15](https://github.com/LightCyan01/AR-FA-PNL-Private-Server/pull/15).
+Fresh installed-client acceptance and broader unresolved effect definitions
+remain open, so the damage/effects estimate is intentionally unchanged.
