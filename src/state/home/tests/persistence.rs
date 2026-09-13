@@ -80,6 +80,44 @@ fn story_mission_uses_day_and_scene_progress() {
 }
 
 #[test]
+fn changed_quest_state_advances_story_mission_once() {
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let rules = load_rules().unwrap();
+    let before = starter_resources(&proto, &load_fresh_rules().unwrap()).unwrap();
+    let mut resources = before.clone();
+    let mut quest = empty_message(&proto, "blend.model.QuestState").unwrap();
+    quest.set_field_by_name("quest_id", Value::I32(101002007));
+    quest.set_field_by_name("clear_count", Value::I32(1));
+    upsert_quest_state(&mut resources, quest);
+    let mut changed = empty_message(&proto, "blend.model.Resources").unwrap();
+
+    resource_progress(
+        &proto,
+        &rules,
+        &before,
+        &mut resources,
+        &mut changed,
+        unix_now(),
+    )
+    .unwrap();
+
+    let mission = rules.missions.iter().find(|row| row.id == 51002).unwrap();
+    assert_eq!(total_task_count(&resources, 5), 1);
+    assert_eq!(mission_count(&resources, mission), 1);
+    assert_eq!(
+        mission_count(
+            &resources,
+            &rules.missions.iter().find(|row| row.id == 51007).unwrap()
+        ),
+        0
+    );
+}
+
+#[test]
 fn present_producer_rejects_duplicate_tools_and_advances_real_missions() {
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
