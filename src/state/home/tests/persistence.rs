@@ -36,7 +36,7 @@ fn recipe_unlocks_reconcile_from_persisted_progress() {
         .decode("blend.api.RecipeLearnResponse", &result.response_plaintext)
         .unwrap();
     assert!(i32_list(&response, "learned_recipe_ids").contains(&4));
-    println!("RECIPE_UNLOCK_RECONCILIATION_OK recipe=4 quest=101001006");
+    println!("RECIPE_UNLOCK_RECONCILIATION_OK recipe=4 quest=101002006");
 }
 
 #[test]
