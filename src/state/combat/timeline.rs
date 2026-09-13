@@ -177,6 +177,7 @@ pub(crate) fn member_offense_and_defense(
     rules: &TutorialRules,
     attacker: &DynamicMessage,
     target: &DynamicMessage,
+    runtime: Option<&effects::Runtime>,
     skill: &TutorialSkill,
 ) -> Result<(i32, i32, i32), StateError> {
     let attribute = preferred_attack_attribute(target, skill)?;
@@ -202,11 +203,16 @@ pub(crate) fn member_offense_and_defense(
         } else {
             stats.mental
         };
-        if matches!(enemy_id, 80001050 | 80001051) {
+        let value = if matches!(enemy_id, 80001050 | 80001051) {
             value * 4 / 5
         } else {
             value
-        }
+        };
+        let target_id = member_id(target)?;
+        let rate = (10_000
+            + runtime.map_or(0, |runtime| runtime.stat_rate(target_id, defense_field)))
+        .clamp(0, 1_000_000);
+        checked_i32(i64::from(value) * rate / 10_000)?
     } else {
         i32_field(&member_status(target, "current_status")?, defense_field)
             .ok_or(StateError::InvalidRequest)?
@@ -435,7 +441,7 @@ pub(crate) fn policy_damage(
     variance: u32,
 ) -> Result<i64, StateError> {
     let (offense, defense, attribute) =
-        member_offense_and_defense(proto, rules, attacker, target, skill)?;
+        member_offense_and_defense(proto, rules, attacker, target, runtime, skill)?;
     let skill_damage_bonus = checked_i32(
         i64::from(state_change_summary_value(attacker, 1))
             + runtime.map_or(0, |runtime| {

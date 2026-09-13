@@ -440,7 +440,7 @@ pub(crate) fn enemy_damage(
     variance: u32,
 ) -> Result<i64, StateError> {
     let (attack, defense, attribute) =
-        member_offense_and_defense(proto, rules, actor, target, skill)?;
+        member_offense_and_defense(proto, rules, actor, target, None, skill)?;
     let base = match skill.skill_power_type {
         2 => {
             i128::from(attack) * i128::from(skill.power.max(0)) * 100
