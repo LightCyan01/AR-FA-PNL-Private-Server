@@ -4,6 +4,7 @@ use super::prelude::*;
 
 mod combat;
 mod foundation;
+mod missions;
 mod remaining;
 mod synthesis;
 
