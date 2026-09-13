@@ -158,6 +158,79 @@ fn pre_reconciled_quest_state_is_not_counted_again() {
 }
 
 #[test]
+fn chapter_missions_follow_their_quest_clear_catalog_keys() {
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let rules = load_rules().unwrap();
+    let before = starter_resources(&proto, &load_fresh_rules().unwrap()).unwrap();
+    for (quest_id, condition_id, mission_id) in [
+        (101002006, 4, 51001),
+        (101002007, 5, 51002),
+        (101002020, 7, 51007),
+    ] {
+        let mut resources = before.clone();
+        let mut quest = empty_message(&proto, "blend.model.QuestState").unwrap();
+        quest.set_field_by_name("quest_id", Value::I32(quest_id));
+        quest.set_field_by_name("clear_count", Value::I32(1));
+        upsert_quest_state(&mut resources, quest);
+        let mut changed = empty_message(&proto, "blend.model.Resources").unwrap();
+        resource_progress(
+            &proto,
+            &rules,
+            &before,
+            &mut resources,
+            &mut changed,
+            unix_now(),
+        )
+        .unwrap();
+        assert_eq!(total_task_count(&resources, condition_id), 1);
+        for candidate in [51001, 51002, 51007] {
+            let mission = rules
+                .missions
+                .iter()
+                .find(|row| row.id == candidate)
+                .unwrap();
+            assert_eq!(
+                mission_count(&resources, mission),
+                i32::from(candidate == mission_id)
+            );
+        }
+        let mut request = empty_message(&proto, "blend.api.MissionReceiveRequest").unwrap();
+        request.set_field_by_name("mission_ids", Value::List(vec![Value::I32(mission_id)]));
+        request.set_field_by_name("bulk_receive", Value::Bool(true));
+        let mut changed = empty_message(&proto, "blend.model.Resources").unwrap();
+        let mut home = HomeState::default();
+        let (rewards, _) = claim_missions(
+            &proto,
+            &rules,
+            &mut resources,
+            &mut changed,
+            &mut home,
+            &request,
+            unix_now(),
+        )
+        .unwrap();
+        assert!(!rewards.is_empty());
+        assert_eq!(received(&resources, mission_id), 1);
+        let (repeat, _) = claim_missions(
+            &proto,
+            &rules,
+            &mut resources,
+            &mut changed,
+            &mut home,
+            &request,
+            unix_now(),
+        )
+        .unwrap();
+        assert!(repeat.is_empty());
+        assert_eq!(received(&resources, mission_id), 1);
+    }
+}
+
+#[test]
 fn present_producer_rejects_duplicate_tools_and_advances_real_missions() {
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
