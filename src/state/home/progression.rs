@@ -629,6 +629,38 @@ pub(crate) fn update_task(
     Ok(())
 }
 
+fn state_counter_total(
+    objective: &MissionObjective,
+    item_totals: &BTreeMap<i32, i32>,
+    quest_totals: &BTreeMap<i32, i32>,
+) -> Option<i32> {
+    objective
+        .counter
+        .iter()
+        .chain(&objective.counters)
+        .filter_map(|counter| {
+            if let Some(id) = counter
+                .strip_prefix("item_received:")
+                .and_then(|id| id.parse::<i32>().ok())
+            {
+                item_totals.get(&id).copied()
+            } else {
+                counter
+                    .strip_prefix("quest_clear:")
+                    .and_then(|id| id.parse::<i32>().ok())
+                    .and_then(|id| quest_totals.get(&id).copied())
+            }
+        })
+        .reduce(i32::saturating_add)
+}
+
+fn changed_task_count(changed: &DynamicMessage, condition_id: i32) -> Option<i32> {
+    message_list(changed, "total_task_counts")
+        .iter()
+        .find(|row| i32_field(row, "condition_id") == Some(condition_id))
+        .and_then(|row| i32_field(row, "count"))
+}
+
 pub(crate) fn advance_missions(
     proto: &ProtoRegistry,
     rules: &HomeRules,
@@ -690,10 +722,19 @@ pub(crate) fn advance_missions(
             }
         } else {
             for task in &rules.total_tasks {
-                if task.condition_id != 137 && task.objective.matches(event) {
-                    let next = task
-                        .objective
-                        .advance(total_task_count(resources, task.condition_id), delta);
+                if task.condition_id == 137 || !task.objective.matches(event) {
+                    continue;
+                }
+                let current = total_task_count(resources, task.condition_id);
+                let next = state_counter_total(&task.objective, &item_totals, &quest_totals)
+                    .filter(|target| {
+                        // Keep a prior absolute update from being incremented again.
+                        changed_task_count(changed, task.condition_id).is_some()
+                            || *target > current
+                    })
+                    .map(|target| current.max(target))
+                    .unwrap_or_else(|| task.objective.advance(current, delta));
+                if next > current {
                     update_task(resources, changed, task.condition_id, next)?;
                 }
             }
@@ -706,25 +747,7 @@ pub(crate) fn advance_missions(
                 update_task(resources, changed, task.condition_id, count)?;
             }
         }
-        let current = task
-            .objective
-            .counter
-            .iter()
-            .chain(&task.objective.counters)
-            .filter_map(|counter| {
-                if let Some(id) = counter
-                    .strip_prefix("item_received:")
-                    .and_then(|id| id.parse::<i32>().ok())
-                {
-                    item_totals.get(&id).copied()
-                } else {
-                    counter
-                        .strip_prefix("quest_clear:")
-                        .and_then(|id| id.parse::<i32>().ok())
-                        .and_then(|id| quest_totals.get(&id).copied())
-                }
-            })
-            .reduce(i32::saturating_add);
+        let current = state_counter_total(&task.objective, &item_totals, &quest_totals);
         if let Some(count) =
             current.filter(|count| *count > total_task_count(resources, task.condition_id))
         {
