@@ -90,6 +90,6 @@ Percentages are working implementation estimates, not client test pass rates.
 | Quests and battle objectives | 80% | Quest state and objective progression |
 | Combat skills, actions, Burst, turn order, and timeline | 70% | Skill selection/execution, Burst availability and placement, independent action/turn cursors, timeline construction, and advancement |
 | Damage, penetration, and combat effects | 65% | Base-stat composition, damage policy, penetration, hidden enemy defense modifiers, and effect application |
-| Missions and achievements | 60% | Mission and achievement milestone mapping |
+| Missions and achievements | 65% | Mission counter reconciliation; chapter milestone mapping and live awards |
 | Synthesis | 65% | Recipe execution, quantity, and rating |
 | Integrated acceptance | 35% | Fresh-player and installed-client verification |
