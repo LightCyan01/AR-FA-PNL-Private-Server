@@ -500,7 +500,7 @@ fn combat_vector_first_tutorial_battle_preserves_item_and_burst_boundary() {
     )))
     .unwrap();
     let fresh_rules = load_fresh_rules().unwrap();
-    let rules = load_tutorial_rules().unwrap();
+    let rules = load_gameplay_rules().unwrap();
     let opening = reduce_talk_event(
         &proto,
         &fresh_rules,
