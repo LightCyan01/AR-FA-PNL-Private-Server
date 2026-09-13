@@ -179,7 +179,19 @@ pub(crate) fn battle_tool_effects(
             .ok_or(StateError::InvalidRequest)?;
         for effect in &trait_rule.effects {
             // These scalar tool modifiers are already consumed by the damage/heal formula.
-            if matches!(effect.id, 3000009 | 3000375 | 3000377 | 3000075 | 3000073) {
+            if matches!(
+                effect.id,
+                3000009
+                    | 3000073
+                    | 3000075
+                    | 3000374
+                    | 3000375
+                    | 3000376
+                    | 3000377
+                    | 3000378
+                    | 3000379
+                    | 3000380
+            ) {
                 continue;
             }
             effects.push(TutorialSkillEffect {
@@ -243,6 +255,7 @@ pub(crate) fn build_battle_tool_selections(
     runtime: Option<&effects::Runtime>,
 ) -> Result<Vec<DynamicMessage>, StateError> {
     let members = message_list(state, "members");
+    let actor = current_actor(state)?;
     let mut selections = Vec::new();
     for tool_message in message_list(state, "battle_tools") {
         if i32_field(&tool_message, "usage_count").unwrap_or_default() <= 0 {
@@ -266,7 +279,7 @@ pub(crate) fn build_battle_tool_selections(
             if skill.skill_effect_type == 2 {
                 let hp = i32_field(target, "hp").unwrap_or_default().max(0);
                 let max_hp = i32_field(target, "max_hp").unwrap_or_default().max(0);
-                let heal = policy_tool_heal(rules, &tool, skill)?.min(max_hp - hp);
+                let heal = policy_tool_heal(rules, &tool, skill, &actor, target)?.min(max_hp - hp);
                 preview.set_field_by_name("hp_heal", Value::Message(wrapper_i32(proto, heal)?));
             } else if skill.skill_effect_type == 1 {
                 let broken = target.has_field_by_name("enemy")
@@ -495,8 +508,13 @@ pub(crate) fn policy_tool_damage(
         .iter()
         .filter(|member| member_type(member).ok() == Some(0) && bool_field(member, "is_alive"))
         .map(|member| {
-            state_change_summary_value(member, 27)
-                .saturating_sub(state_change_summary_value(member, 28))
+            i64::from(state_change_summary_value(member, 27))
+                .saturating_sub(i64::from(state_change_summary_value(member, 28)))
+                .saturating_add(runtime.map_or(0, |runtime| {
+                    runtime
+                        .contextual_summary(member, skill, false, 27)
+                        .saturating_sub(runtime.contextual_summary(member, skill, false, 28))
+                }))
         })
         .max()
         .ok_or(StateError::InvalidRequest)?;
@@ -520,26 +538,35 @@ pub(crate) fn policy_tool_damage(
         effects::penetration_factor(item_penetration);
     let resistance =
         (100 - target_resistance(target, attribute)? + if broken { 50 } else { 0 }).max(0) as i128;
-    let trait_bonus = tool_trait_effect_total(rules, tool, 3_000_009)?
-        + if attribute == 2 {
-            tool_trait_effect_total(rules, tool, 3_000_375)?
-        } else if attribute == 4 {
-            tool_trait_effect_total(rules, tool, 3_000_377)?
-        } else {
-            0
-        };
+    let magic_trait_bonus = if (5..=8).contains(&attribute) {
+        tool_trait_effect_total(rules, tool, 3_000_009)?
+    } else {
+        0
+    };
+    let attribute_trait_bonus = match attribute {
+        1 => tool_trait_effect_total(rules, tool, 3_000_374)?,
+        2 => tool_trait_effect_total(rules, tool, 3_000_375)?,
+        3 => tool_trait_effect_total(rules, tool, 3_000_376)?,
+        5 => tool_trait_effect_total(rules, tool, 3_000_377)?,
+        6 => tool_trait_effect_total(rules, tool, 3_000_379)?,
+        7 => tool_trait_effect_total(rules, tool, 3_000_378)?,
+        8 => tool_trait_effect_total(rules, tool, 3_000_380)?,
+        _ => 0,
+    };
+    let trait_bonus = magic_trait_bonus
+        .checked_add(attribute_trait_bonus)
+        .ok_or(StateError::InvalidRequest)?;
+    let incoming = effects::incoming_multiplier_for_skill(target, skill, runtime, false)?;
     let numerator = i128::from(skill.power.max(0))
-        * i128::from(10_000 + item_bonus + trait_bonus)
+        * i128::from(10_000i64 + item_bonus + i64::from(trait_bonus))
         * resistance
         * i128::from(variance)
         * penetration_numerator;
     let denominator = 10i128 * 10_000 * 100 * 10_000;
-    Ok((numerator
-        * i128::from(effects::incoming_multiplier_with_runtime(
-            target, attribute, runtime,
-        ))
-        / (denominator * 10_000 * penetration_denominator))
-        .clamp(0, 9_999_999_999) as i64)
+    Ok(
+        (numerator * i128::from(incoming) / (denominator * 10_000 * penetration_denominator))
+            .clamp(0, 9_999_999_999) as i64,
+    )
 }
 
 pub(crate) fn tool_trait_effect_total(
@@ -577,6 +604,8 @@ pub(crate) fn policy_tool_heal(
     rules: &TutorialRules,
     tool: &BattlePartyTool,
     skill: &TutorialSkill,
+    source: &DynamicMessage,
+    target: &DynamicMessage,
 ) -> Result<i32, StateError> {
     let mut bonus = tool_trait_effect_total(rules, tool, 3_000_075)?;
     if skill.skill_target_type == Some(2) {
@@ -584,7 +613,8 @@ pub(crate) fn policy_tool_heal(
             .checked_add(tool_trait_effect_total(rules, tool, 3_000_073)?)
             .ok_or(StateError::InvalidRequest)?;
     }
-    checked_i32(i64::from(skill.power.max(0)) * i64::from(10_000 + bonus) / 10_000)
+    let base = checked_i32(i64::from(skill.power.max(0)) * i64::from(10_000 + bonus) / 10_000)?;
+    effects::healing_amount(base, source, target)
 }
 
 pub(crate) fn policy_tutorial_enemy_damage(
