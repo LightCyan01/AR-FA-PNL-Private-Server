@@ -500,7 +500,7 @@ fn combat_vector_first_tutorial_battle_preserves_item_and_burst_boundary() {
     )))
     .unwrap();
     let fresh_rules = load_fresh_rules().unwrap();
-    let rules = load_tutorial_rules().unwrap();
+    let rules = load_gameplay_rules().unwrap();
     let opening = reduce_talk_event(
         &proto,
         &fresh_rules,
@@ -733,6 +733,201 @@ fn combat_vector_first_tutorial_battle_preserves_item_and_burst_boundary() {
         &member_status(&actor, "burst_gauge").unwrap(),
         "is_enable"
     ));
+}
+
+#[test]
+fn battle_tool_attribute_traits_follow_catalog_attributes() {
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let fresh = load_fresh_rules().unwrap();
+    let rules = load_gameplay_rules().unwrap();
+    let resources = reduce_talk_event(
+        &proto,
+        &fresh,
+        &rules,
+        starter_resources(&proto, &fresh).unwrap(),
+        101001001,
+        1,
+    )
+    .unwrap()
+    .resources;
+    let start = reduce_battle_start(&proto, &rules, resources, 101001002, 1).unwrap();
+    let members = message_list(&start.state, "members");
+    let target = members
+        .iter()
+        .find(|member| member_type(member).ok() == Some(1))
+        .unwrap();
+    let skill = rule_skill(&rules, 31_550).unwrap();
+    let plain = BattlePartyTool {
+        tool_id: 2,
+        usage_count: 2,
+        traits: Vec::new(),
+    };
+    let fire_blessing = BattlePartyTool {
+        traits: vec![TutorialTraitParam { id: 6, rank: 5 }],
+        ..plain.clone()
+    };
+    let plain_damage =
+        policy_tool_damage(&rules, &plain, &members, target, skill, None, false, 10_000).unwrap();
+    let blessed_damage = policy_tool_damage(
+        &rules,
+        &fire_blessing,
+        &members,
+        target,
+        skill,
+        None,
+        false,
+        10_000,
+    )
+    .unwrap();
+    assert!(
+        blessed_damage > plain_damage,
+        "fire blessing must affect the fire battle-tool skill"
+    );
+}
+
+#[test]
+fn battle_tool_damage_uses_contextual_incoming_modifiers() {
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let fresh = load_fresh_rules().unwrap();
+    let rules = load_gameplay_rules().unwrap();
+    let resources = reduce_talk_event(
+        &proto,
+        &fresh,
+        &rules,
+        starter_resources(&proto, &fresh).unwrap(),
+        101001001,
+        1,
+    )
+    .unwrap()
+    .resources;
+    let start = reduce_battle_start(&proto, &rules, resources, 101001002, 1).unwrap();
+    let mut state = start.state.clone();
+    let members = message_list(&state, "members");
+    let source_id = members
+        .iter()
+        .find(|member| member_type(member).ok() == Some(0))
+        .and_then(|member| member_id(member).ok())
+        .unwrap();
+    let target_id = members
+        .iter()
+        .find(|member| member_type(member).ok() == Some(1))
+        .and_then(|member| member_id(member).ok())
+        .unwrap();
+    let skill = rule_skill(&rules, 31_551).unwrap();
+    let tool = BattlePartyTool {
+        tool_id: 3,
+        usage_count: 2,
+        traits: Vec::new(),
+    };
+    let baseline_members = members.clone();
+    let mut runtime = effects::Runtime::default();
+    runtime.prepare(&state, "tool-incoming").unwrap();
+    runtime
+        .apply(
+            &proto,
+            &mut state,
+            source_id,
+            &[TutorialSkillEffect {
+                id: 71140004,
+                value: 2_000,
+            }],
+            &[target_id],
+            false,
+            "after",
+            None,
+        )
+        .unwrap();
+    let members = message_list(&state, "members");
+    let target = members
+        .iter()
+        .find(|member| member_id(member).ok() == Some(target_id))
+        .unwrap();
+    let baseline_target = baseline_members
+        .iter()
+        .find(|member| member_id(member).ok() == Some(target_id))
+        .unwrap();
+    let plain = policy_tool_damage(
+        &rules,
+        &tool,
+        &baseline_members,
+        baseline_target,
+        skill,
+        None,
+        false,
+        10_000,
+    )
+    .unwrap();
+    let with_incoming = policy_tool_damage(
+        &rules,
+        &tool,
+        &members,
+        target,
+        skill,
+        Some(&runtime),
+        false,
+        10_000,
+    )
+    .unwrap();
+    assert_eq!(with_incoming, plain * 12 / 10);
+}
+
+#[test]
+fn battle_tool_healing_uses_source_and_target_modifiers() {
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let rules = load_gameplay_rules().unwrap();
+    let skill = rule_skill(&rules, 31_549).unwrap();
+    let tool = BattlePartyTool {
+        tool_id: 1,
+        usage_count: 2,
+        traits: vec![TutorialTraitParam { id: 44, rank: 3 }],
+    };
+    let fresh = load_fresh_rules().unwrap();
+    let resources = reduce_talk_event(
+        &proto,
+        &fresh,
+        &rules,
+        starter_resources(&proto, &fresh).unwrap(),
+        101001001,
+        1,
+    )
+    .unwrap()
+    .resources;
+    let start = reduce_battle_start(&proto, &rules, resources, 101001002, 1).unwrap();
+    let allies: Vec<_> = message_list(&start.state, "members")
+        .into_iter()
+        .filter(|member| member_type(member).ok() == Some(0))
+        .collect();
+    let source = allies[0].clone();
+    let target = source.clone();
+    let plain = policy_tool_heal(&rules, &tool, skill, &source, &target).unwrap();
+    let mut boosted_source = source.clone();
+    boosted_source.set_field_by_name(
+        "state_changes",
+        Value::List(vec![Value::Message(
+            effects::display(&proto, 50013, 1_000, -1).unwrap(),
+        )]),
+    );
+    let mut boosted_target = target.clone();
+    boosted_target.set_field_by_name(
+        "state_changes",
+        Value::List(vec![Value::Message(
+            effects::display(&proto, 50014, 1_000, -1).unwrap(),
+        )]),
+    );
+    let boosted = policy_tool_heal(&rules, &tool, skill, &boosted_source, &boosted_target).unwrap();
+    assert_eq!(boosted, plain * 12 / 10);
 }
 
 pub(super) fn play_tutorial_battle(

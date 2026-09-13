@@ -92,7 +92,13 @@ pub(crate) fn apply_attack_results(
                 .ok_or(StateError::InvalidRequest)?
                 .max(0);
             let heal = if let Some(tool) = tool {
-                policy_tool_heal(rules, tool, skill)?
+                policy_tool_heal(
+                    rules,
+                    tool,
+                    skill,
+                    &members[actor_index],
+                    &members[target_index],
+                )?
             } else {
                 effects::healing_amount(
                     quest::heal_amount(&members[actor_index], &members[target_index], skill)?,

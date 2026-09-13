@@ -80,6 +80,23 @@ pub(crate) fn incoming_multiplier_with_runtime(
     .clamp(0, 1_000_000)
 }
 
+pub(crate) fn incoming_multiplier_for_skill(
+    target: &DynamicMessage,
+    skill: &TutorialSkill,
+    runtime: Option<&Runtime>,
+    critical: bool,
+) -> Result<i64, StateError> {
+    Ok((incoming_multiplier_with_runtime(
+        target,
+        preferred_attack_attribute(target, skill)?,
+        runtime,
+    ) + runtime.map_or(0, |runtime| {
+        runtime.contextual_summary(target, skill, critical, 11)
+            - runtime.contextual_summary(target, skill, critical, 12)
+    }))
+    .clamp(0, 1_000_000))
+}
+
 /// Convert the protocol's hundredths-of-a-percent penetration value into the
 /// client damage factor: (10x + 3000) / (3x + 3000), where x is percent.
 pub(crate) fn penetration_factor(raw: i64) -> (i128, i128) {
@@ -97,7 +114,6 @@ pub(crate) fn secondary_damage(
     runtime: Option<&Runtime>,
     critical: bool,
 ) -> Result<i64, StateError> {
-    let attribute = preferred_attack_attribute(target, skill)?;
     let contextual = |summary| {
         runtime.map_or(0, |runtime| {
             runtime.contextual_summary(source, skill, critical, summary)
@@ -120,12 +136,7 @@ pub(crate) fn secondary_damage(
     } else {
         15_000
     };
-    let incoming = (incoming_multiplier_with_runtime(target, attribute, runtime)
-        + runtime.map_or(0, |runtime| {
-            runtime.contextual_summary(target, skill, critical, 11)
-                - runtime.contextual_summary(target, skill, critical, 12)
-        }))
-        .clamp(0, 1_000_000);
+    let incoming = incoming_multiplier_for_skill(target, skill, runtime, critical)?;
     let penetration = (i64::from(state_change_summary_value(source, 10))
         + contextual(10)
         + instant_summary(skill, target, critical, 10)?
@@ -133,7 +144,7 @@ pub(crate) fn secondary_damage(
         + runtime.map_or(0, |runtime| {
             runtime.contextual_summary(target, skill, critical, 19)
         }))
-        .max(0);
+    .max(0);
     let (penetration_numerator, penetration_denominator) = penetration_factor(penetration);
     Ok((i128::from(base)
         * i128::from(power)

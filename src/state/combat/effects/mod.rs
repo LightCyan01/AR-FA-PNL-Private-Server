@@ -16,8 +16,10 @@ mod runtime_turn;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+pub(crate) use policy::incoming_multiplier_with_runtime;
 pub(crate) use policy::{
-    healing_amount, incoming_multiplier_with_runtime, penetration_factor, secondary_damage,
+    healing_amount, incoming_multiplier_for_skill, penetration_factor, secondary_damage,
 };
 pub(crate) use registry::{registry, validate, Expiry};
 pub(crate) use runtime::{Passive, Runtime};
