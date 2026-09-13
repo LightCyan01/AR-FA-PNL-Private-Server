@@ -637,15 +637,6 @@ pub(crate) fn advance_missions(
     now: i64,
     event: Option<(&str, i32)>,
 ) -> Result<(), StateError> {
-    let totals: BTreeMap<_, _> = message_list(resources, "total_task_counts")
-        .iter()
-        .filter_map(|r| {
-            Some((
-                i32_field(r, "condition_id")?,
-                i32_field(r, "count").unwrap_or(0),
-            ))
-        })
-        .collect();
     let item_totals: BTreeMap<_, _> = message_list(resources, "items")
         .iter()
         .filter_map(|r| {
@@ -664,38 +655,6 @@ pub(crate) fn advance_missions(
             ))
         })
         .collect();
-    for task in &rules.total_tasks {
-        if let Some(state) = &task.objective.state {
-            let count = objective_count(rules, resources, state);
-            if count > totals.get(&task.condition_id).copied().unwrap_or(0) {
-                update_task(resources, changed, task.condition_id, count)?;
-            }
-        }
-        let current = task
-            .objective
-            .counter
-            .iter()
-            .chain(&task.objective.counters)
-            .filter_map(|counter| {
-                if let Some(id) = counter
-                    .strip_prefix("item_received:")
-                    .and_then(|id| id.parse::<i32>().ok())
-                {
-                    item_totals.get(&id).copied()
-                } else {
-                    counter
-                        .strip_prefix("quest_clear:")
-                        .and_then(|id| id.parse::<i32>().ok())
-                        .and_then(|id| quest_totals.get(&id).copied())
-                }
-            })
-            .reduce(i32::saturating_add);
-        if let Some(count) =
-            current.filter(|count| *count > totals.get(&task.condition_id).copied().unwrap_or(0))
-        {
-            update_task(resources, changed, task.condition_id, count)?;
-        }
-    }
     if let Some((event, delta)) = event {
         if delta < 0 {
             return Err(StateError::InvalidRequest);
@@ -738,6 +697,38 @@ pub(crate) fn advance_missions(
                     update_task(resources, changed, task.condition_id, next)?;
                 }
             }
+        }
+    }
+    for task in &rules.total_tasks {
+        if let Some(state) = &task.objective.state {
+            let count = objective_count(rules, resources, state);
+            if count > total_task_count(resources, task.condition_id) {
+                update_task(resources, changed, task.condition_id, count)?;
+            }
+        }
+        let current = task
+            .objective
+            .counter
+            .iter()
+            .chain(&task.objective.counters)
+            .filter_map(|counter| {
+                if let Some(id) = counter
+                    .strip_prefix("item_received:")
+                    .and_then(|id| id.parse::<i32>().ok())
+                {
+                    item_totals.get(&id).copied()
+                } else {
+                    counter
+                        .strip_prefix("quest_clear:")
+                        .and_then(|id| id.parse::<i32>().ok())
+                        .and_then(|id| quest_totals.get(&id).copied())
+                }
+            })
+            .reduce(i32::saturating_add);
+        if let Some(count) =
+            current.filter(|count| *count > total_task_count(resources, task.condition_id))
+        {
+            update_task(resources, changed, task.condition_id, count)?;
         }
     }
     let mut missions: BTreeMap<i32, DynamicMessage> = message_list(resources, "missions")
