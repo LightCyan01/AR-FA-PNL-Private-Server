@@ -605,7 +605,9 @@ fn synthesis_routes_use_complete_master_rules() {
     .unwrap();
     let fresh = load_fresh_rules().unwrap();
     let tutorial = load_tutorial_rules().unwrap();
-    let rules = load_synthesis_rules().unwrap();
+    let mut rules = load_synthesis_rules().unwrap();
+    let home_rules = home::load_rules().unwrap();
+    let activity_rules = activities::load_rules().unwrap();
     let now = unix_now();
     let mut regenerating = synthesis_test_resources(&proto, &fresh, &tutorial);
     let mut status = status_message(&regenerating).unwrap();
@@ -650,8 +652,8 @@ fn synthesis_routes_use_complete_master_rules() {
         let mutation = reduce_synthesis(
             &proto,
             &rules,
-            &home::load_rules().unwrap(),
-            &activities::load_rules().unwrap(),
+            &home_rules,
+            &activity_rules,
             synthesis_test_resources(&proto, &fresh, &tutorial),
             &request,
             mode,
@@ -678,10 +680,14 @@ fn synthesis_routes_use_complete_master_rules() {
             message_list(&mutation.resources, "battle_tools").len(),
             1 + target_count
         );
+        let saved_recipe = message_list(&mutation.resources, "recipes")
+            .into_iter()
+            .find(|value| i32_field(value, "recipe_id") == Some(6))
+            .unwrap();
         assert_eq!(
             item_quantity(&mutation.resources, 67),
             Some(
-                if matches!(mode, SynthesisMode::Execute | SynthesisMode::Bulk) {
+                if optional_i32_field(&saved_recipe, "last_ingredient_id") == Some(67) {
                     1
                 } else {
                     2
@@ -701,8 +707,8 @@ fn synthesis_routes_use_complete_master_rules() {
     let ingredient_result = reduce_synthesis(
         &proto,
         &rules,
-        &home::load_rules().unwrap(),
-        &activities::load_rules().unwrap(),
+        &home_rules,
+        &activity_rules,
         ingredient_resources,
         &ingredient_request,
         SynthesisMode::Bulk,
@@ -715,12 +721,103 @@ fn synthesis_routes_use_complete_master_rules() {
         empty_message(&proto, "blend.api.SynthesisCombinationRankingRequest").unwrap();
     request.set_field_by_name("recipe_id", Value::I32(6));
     let ranking = reduce_synthesis_ranking(&proto, &rules, &resources, &request, 1).unwrap();
-    assert!(["total", "weekly", "monthly"]
+    let combinations = ["total", "weekly", "monthly"].map(|field| {
+        message_list(&member_status(&ranking, field).unwrap(), "ranks")
+            .into_iter()
+            .map(|rank| {
+                (
+                    i32_field(&rank, "character1_id").unwrap(),
+                    i32_field(&rank, "character2_id").unwrap(),
+                    optional_i32_field(&rank, "ingredient_id").unwrap(),
+                )
+            })
+            .collect::<Vec<_>>()
+    });
+    let ranking_count = usize::try_from(rules.constants.max_rental_rank).unwrap();
+    assert!(combinations
         .iter()
-        .all(
-            |field| member_status(&ranking, field)
-                .is_ok_and(|value| message_list(&value, "ranks").len() == 3)
-        ));
+        .all(|values| values.len() == ranking_count));
+    assert!(combinations
+        .iter()
+        .all(|values| values.iter().collect::<BTreeSet<_>>().len() == ranking_count));
+    assert_ne!(combinations[0], combinations[1]);
+    assert_ne!(combinations[1], combinations[2]);
+
+    let selected = combinations[1][1];
+    let mut rental = synthesis_request(&proto, SynthesisMode::Rental);
+    rental.set_field_by_name("ranking_type", Value::I32(2));
+    rental.set_field_by_name("rank_number", Value::I32(2));
+    let rental_mutation = reduce_synthesis(
+        &proto,
+        &rules,
+        &home_rules,
+        &activity_rules,
+        resources.clone(),
+        &rental,
+        SynthesisMode::Rental,
+        1,
+    )
+    .unwrap();
+    let saved_recipe = message_list(&rental_mutation.resources, "recipes")
+        .into_iter()
+        .find(|recipe| i32_field(recipe, "recipe_id") == Some(6))
+        .unwrap();
+    assert_eq!(
+        i32_list(&saved_recipe, "last_character_ids"),
+        vec![selected.0, selected.1]
+    );
+    assert_eq!(
+        optional_i32_field(&saved_recipe, "last_ingredient_id"),
+        Some(selected.2)
+    );
+
+    rules.local_policy.extra_target_rate = 100;
+    rules.local_policy.great_success_rate = 100;
+    rules.local_policy.stimulator_drop_rate = 0;
+    for rank in &mut rules.trait_ranks {
+        rank.weight = u32::from(rank.id == 1);
+    }
+    let mut bulk_resources = synthesis_test_resources(&proto, &fresh, &tutorial);
+    change_item(&proto, &mut bulk_resources, 67, 12).unwrap();
+    let ingredient_before = item_quantity(&bulk_resources, 67).unwrap();
+    let tools_before = message_list(&bulk_resources, "battle_tools").len();
+    let mut bulk = synthesis_request(&proto, SynthesisMode::Bulk);
+    bulk.set_field_by_name("count", Value::I32(2));
+    let bulk_mutation = reduce_synthesis(
+        &proto,
+        &rules,
+        &home_rules,
+        &activity_rules,
+        bulk_resources,
+        &bulk,
+        SynthesisMode::Bulk,
+        1,
+    )
+    .unwrap();
+    assert_eq!(i32_field(&bulk_mutation.response, "grade"), Some(4));
+    assert_eq!(
+        i32_field(&bulk_mutation.response, "start_grade_up"),
+        Some(0)
+    );
+    assert_eq!(
+        i32_field(&bulk_mutation.response, "final_grade_up"),
+        Some(1)
+    );
+    assert_eq!(
+        item_quantity(&bulk_mutation.resources, 67),
+        Some(ingredient_before - 12)
+    );
+    assert_eq!(
+        message_list(&bulk_mutation.resources, "battle_tools").len(),
+        tools_before + 6
+    );
+    assert_eq!(
+        message_list(&bulk_mutation.response, "rewards")
+            .iter()
+            .filter(|reward| i32_field(reward, "type") == Some(14))
+            .count(),
+        6
+    );
 
     let mut invalid = synthesis_request(&proto, SynthesisMode::Execute);
     invalid.set_field_by_name(
@@ -731,8 +828,8 @@ fn synthesis_routes_use_complete_master_rules() {
         reduce_synthesis(
             &proto,
             &rules,
-            &home::load_rules().unwrap(),
-            &activities::load_rules().unwrap(),
+            &home_rules,
+            &activity_rules,
             resources,
             &invalid,
             SynthesisMode::Execute,
@@ -754,8 +851,8 @@ fn synthesis_routes_use_complete_master_rules() {
     let mutation = reduce_synthesis(
         &proto,
         &rules,
-        &home::load_rules().unwrap(),
-        &activities::load_rules().unwrap(),
+        &home_rules,
+        &activity_rules,
         synthesis_test_resources(&proto, &fresh, &tutorial),
         &disconnected,
         SynthesisMode::Bulk,

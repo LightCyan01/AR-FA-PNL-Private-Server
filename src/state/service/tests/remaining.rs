@@ -137,6 +137,19 @@ fn storage_reopens_synthesis_state() {
         .gameplay_replay(1, "synthesis-1", "/synthesis/bulk_execute", &fingerprint,)
         .unwrap()
         .is_some());
+    let persisted_bytes = reopened.player_resources(1).unwrap();
+    assert!(matches!(
+        reopened.apply_gameplay_reducer(
+            1,
+            "synthesis-1",
+            "/synthesis/bulk_execute",
+            &[0; 32],
+            3,
+            |_| panic!("a conflicting request must not rerun synthesis"),
+        ),
+        Err(StorageError::RequestConflict)
+    ));
+    assert_eq!(reopened.player_resources(1).unwrap(), persisted_bytes);
     drop(reopened);
     let _ = fs::remove_file(path);
 }
