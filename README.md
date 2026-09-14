@@ -63,7 +63,7 @@ src/
   state/
     combat/          battle model, timeline, actions, and effects
     quest/           quest lifecycle and scoring
-    synthesis/       synthesis execution and validation
+    synthesis/       execution, ranking, rental selection, and validation
     home/            missions, rewards, profile, and dispatch
     atelier/         research, collection, memoria, and ships
     activities/      story, exploration, expeditions, and housing
@@ -77,7 +77,7 @@ config.example.toml  non-secret configuration shape
 
 ## Current progress
 
-Status is measured against the active server tree as of 2026-09-13.
+Status is measured against the active server tree as of 2026-09-14.
 
 Percentages are working implementation estimates, not client test pass rates.
 
@@ -90,6 +90,6 @@ Percentages are working implementation estimates, not client test pass rates.
 | Quests and battle objectives | 80% | Quest state and objective progression |
 | Combat skills, actions, Burst, turn order, and timeline | 70% | Skill selection/execution, Burst availability and placement, independent action/turn cursors, timeline construction, and advancement |
 | Damage, penetration, and combat effects | 65% | Base-stat composition, damage policy, penetration, hidden enemy defense modifiers, and effect application |
-| Missions and achievements | 65% | Mission counter reconciliation; chapter milestone mapping and live awards |
-| Synthesis | 65% | Recipe execution, quantity, and rating |
+| Missions and achievements | 75% | Resource-backed counter reconciliation and chapter projections; remaining catalog mappings and live awards |
+| Synthesis | 85% | Grade/rating policy, three-slot bulk output, scoped combination ranking, rental selection, persistence, and live-client acceptance |
 | Integrated acceptance | 35% | Fresh-player and installed-client verification |
