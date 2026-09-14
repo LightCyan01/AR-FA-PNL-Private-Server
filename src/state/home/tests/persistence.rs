@@ -40,6 +40,96 @@ fn recipe_unlocks_reconcile_from_persisted_progress() {
 }
 
 #[test]
+fn mission_claim_rejects_expired_unclaimed_progress() {
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let rules = load_rules().unwrap();
+    let now = unix_now();
+    let mission = rules
+        .missions
+        .iter()
+        .find(|row| {
+            row.reset_cycle == Some(1)
+                && row.prev_mission_id.is_none()
+                && row.event_tab_id.is_none()
+                && row.total_task_condition_id.is_none()
+                && mission_active(&rules, row, now)
+                && row
+                    .steps
+                    .first()
+                    .is_some_and(|step| in_period(step.start_at, None, now))
+                && !row
+                    .objective
+                    .counter
+                    .iter()
+                    .chain(&row.objective.counters)
+                    .any(|event| event == "memoria_collection")
+                && row.objective.state.is_none()
+                && row.objective.synthesis.is_none()
+                && row.objective.battle.is_none()
+        })
+        .unwrap();
+    let mut resources = starter_resources(&proto, &load_fresh_rules().unwrap()).unwrap();
+    let mut stale = empty_message(&proto, "blend.model.Mission").unwrap();
+    stale.set_field_by_name("mission_id", Value::I32(mission.id));
+    stale.set_field_by_name("count", Value::I32(mission.steps[0].count));
+    stale.set_field_by_name(
+        "reset_at",
+        Value::Message(timestamp(&proto, reset_at(Some(1), now).unwrap() - 86_400).unwrap()),
+    );
+    put(&mut resources, "missions", "mission_id", stale);
+    let mut request = empty_message(&proto, "blend.api.MissionReceiveRequest").unwrap();
+    request.set_field_by_name("mission_ids", Value::List(vec![Value::I32(mission.id)]));
+    assert!(reduce_home(
+        &proto,
+        &rules,
+        load_character_rules().unwrap(),
+        resources,
+        &mut HomeState::default(),
+        "/mission/receive",
+        &request,
+        "blend.api.MissionReceiveResponse",
+        now,
+    )
+    .is_err());
+}
+
+#[test]
+fn indexed_mission_events_complete_within_budget() {
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let rules = load_rules().unwrap();
+    let mut resources = starter_resources(&proto, &load_fresh_rules().unwrap()).unwrap();
+    let mut changed = empty_message(&proto, "blend.model.Resources").unwrap();
+    let now = unix_now();
+    advance_missions(&proto, &rules, &mut resources, &mut changed, now, None).unwrap();
+
+    let started = std::time::Instant::now();
+    for _ in 0..8 {
+        advance_missions(
+            &proto,
+            &rules,
+            &mut resources,
+            &mut changed,
+            now,
+            Some(("synthesis", 1)),
+        )
+        .unwrap();
+    }
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(4),
+        "indexed mission events took {elapsed:?}"
+    );
+}
+
+#[test]
 fn story_mission_uses_day_and_scene_progress() {
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),

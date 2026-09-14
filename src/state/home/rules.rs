@@ -101,10 +101,6 @@ pub(crate) struct MissionFloor {
 }
 
 impl MissionObjective {
-    pub(crate) fn matches(&self, event: &str) -> bool {
-        self.counter.as_deref() == Some(event) || self.counters.iter().any(|value| value == event)
-    }
-
     pub(crate) fn advance(&self, current: i32, delta: i32) -> i32 {
         if self.maximum {
             current.max(delta)

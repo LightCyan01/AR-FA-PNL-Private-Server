@@ -55,6 +55,12 @@ pub(crate) fn reduce_home_inner(
         now,
         Some(("memoria_collection", home.memoria_history.len() as i32)),
     )?;
+    if matches!(
+        route,
+        "/mission/receive" | "/mission/count_reward_receive" | "/mission/event_tab_reward_receive"
+    ) {
+        advance_missions(proto, rules, &mut resources, &mut changed, now, None)?;
+    }
     let mut response = empty_message(proto, response_name)?;
     match route {
         "/local/home_refresh" | "/event/top" => {}

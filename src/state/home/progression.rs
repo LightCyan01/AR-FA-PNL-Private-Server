@@ -79,11 +79,10 @@ pub(crate) fn completed_battle_progress(
                 && mission_active(rules, row, now)
                 && row.objective.battle.as_ref().is_some_and(&matches)
             {
-                let mut mission = message_list(resources, "missions")
-                    .into_iter()
+                let existing = message_iter(resources, "missions")
                     .find(|m| i32_field(m, "mission_id") == Some(row.id))
-                    .unwrap_or(empty_message(proto, "blend.model.Mission")?);
-                mission.set_field_by_name("mission_id", Value::I32(row.id));
+                    .cloned();
+                let mut mission = mission_state(proto, row, existing, now)?;
                 let count = row
                     .objective
                     .advance(i32_field(&mission, "count").unwrap_or(0), 1);
@@ -604,18 +603,40 @@ pub(crate) fn mission_active(rules: &HomeRules, row: &MissionRule, now: i64) -> 
         })
 }
 
+fn mission_state(
+    proto: &ProtoRegistry,
+    row: &MissionRule,
+    existing: Option<DynamicMessage>,
+    now: i64,
+) -> Result<DynamicMessage, StateError> {
+    let mut state = existing.unwrap_or(empty_message(proto, "blend.model.Mission")?);
+    state.set_field_by_name("mission_id", Value::I32(row.id));
+    if let Some(reset) = reset_at(row.reset_cycle, now) {
+        if message_i64_field(&state, "reset_at", "seconds") != Some(reset) {
+            state.set_field_by_name("count", Value::I32(0));
+            state.set_field_by_name("received_step_count", Value::I32(0));
+            state.set_field_by_name("reset_at", Value::Message(timestamp(proto, reset)?));
+        }
+    }
+    Ok(state)
+}
+
 pub(crate) fn put(resources: &mut DynamicMessage, field: &str, key: &str, value: DynamicMessage) {
     let id = i32_field(&value, key);
-    let mut rows = message_list(resources, field);
-    if let Some(old) = rows.iter_mut().find(|row| i32_field(row, key) == id) {
-        *old = value;
+    let Some(rows) = resources
+        .get_field_by_name_mut(field)
+        .and_then(Value::as_list_mut)
+    else {
+        return;
+    };
+    if let Some(index) = rows.iter().position(|row| {
+        row.as_message()
+            .is_some_and(|row| i32_field(row, key) == id)
+    }) {
+        rows[index] = Value::Message(value);
     } else {
-        rows.push(value);
+        rows.push(Value::Message(value));
     }
-    resources.set_field_by_name(
-        field,
-        Value::List(rows.into_iter().map(Value::Message).collect()),
-    );
 }
 
 pub(crate) fn update_task(
@@ -656,6 +677,104 @@ fn state_counter_total(
     found.then_some(total)
 }
 
+fn advance_mission_event(
+    proto: &ProtoRegistry,
+    rules: &HomeRules,
+    resources: &mut DynamicMessage,
+    changed: &mut DynamicMessage,
+    now: i64,
+    event: &str,
+    delta: i32,
+) -> Result<(), StateError> {
+    if delta < 0 {
+        return Err(StateError::InvalidRequest);
+    }
+    let task_deltas = progression::aggregate_deltas(
+        rules
+            .mission_index
+            .conditions_for_event(event)
+            .iter()
+            .copied()
+            .map(|condition_id| (condition_id, delta)),
+    );
+    let state_backed = !task_deltas.is_empty()
+        && (event.starts_with("item_received:") || event.starts_with("quest_clear:"));
+    let item_totals: BTreeMap<_, _> = state_backed
+        .then(|| {
+            message_iter(resources, "items")
+                .filter_map(|row| {
+                    Some((
+                        i32_field(row, "item_id")?,
+                        i32_field(row, "total_quantity").unwrap_or(0),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let quest_totals: BTreeMap<_, _> = state_backed
+        .then(|| {
+            message_iter(resources, "quest_states")
+                .filter_map(|row| {
+                    Some((
+                        i32_field(row, "quest_id")?,
+                        i32_field(row, "clear_count").unwrap_or(0),
+                    ))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    for task_delta in task_deltas {
+        let Some(task) = rules
+            .total_tasks
+            .iter()
+            .find(|task| task.condition_id == task_delta.condition_id)
+            .filter(|task| task.condition_id != 137)
+        else {
+            continue;
+        };
+        let current = total_task_count(resources, task_delta.condition_id);
+        let already_changed = message_iter(changed, "total_task_counts").any(|row| {
+            i32_field(row, "condition_id") == Some(task_delta.condition_id)
+        });
+        let next = state_counter_total(&task.objective, &item_totals, &quest_totals)
+            .filter(|target| already_changed || *target > current)
+            .map(|target| current.max(target))
+            .unwrap_or_else(|| task.objective.advance(current, task_delta.amount));
+        if next > current {
+            update_task(resources, changed, task_delta.condition_id, next)?;
+        }
+    }
+
+    let mission_ids: BTreeSet<_> = rules
+        .mission_index
+        .missions_for_event(event)
+        .iter()
+        .copied()
+        .collect();
+    for row in &rules.missions {
+        if !mission_ids.contains(&row.id) || !mission_active(rules, row, now) {
+            continue;
+        }
+        let old = message_iter(resources, "missions")
+            .find(|state| i32_field(state, "mission_id") == Some(row.id))
+            .cloned();
+        let mut state = mission_state(proto, row, old.clone(), now)?;
+        if row.total_task_condition_id.is_none() {
+            let cap = row.steps.last().map(|step| step.count).unwrap_or(0);
+            let count = row
+                .objective
+                .advance(i32_field(&state, "count").unwrap_or(0), delta)
+                .min(cap);
+            state.set_field_by_name("count", Value::I32(count));
+        }
+        if old.as_ref() != Some(&state) {
+            put(resources, "missions", "mission_id", state.clone());
+            put(changed, "missions", "mission_id", state);
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn advance_missions(
     proto: &ProtoRegistry,
     rules: &HomeRules,
@@ -664,8 +783,10 @@ pub(crate) fn advance_missions(
     now: i64,
     event: Option<(&str, i32)>,
 ) -> Result<(), StateError> {
-    let item_totals: BTreeMap<_, _> = message_list(resources, "items")
-        .iter()
+    if let Some((event, delta)) = event {
+        return advance_mission_event(proto, rules, resources, changed, now, event, delta);
+    }
+    let item_totals: BTreeMap<_, _> = message_iter(resources, "items")
         .filter_map(|r| {
             Some((
                 i32_field(r, "item_id")?,
@@ -673,8 +794,7 @@ pub(crate) fn advance_missions(
             ))
         })
         .collect();
-    let quest_totals: BTreeMap<_, _> = message_list(resources, "quest_states")
-        .iter()
+    let quest_totals: BTreeMap<_, _> = message_iter(resources, "quest_states")
         .filter_map(|r| {
             Some((
                 i32_field(r, "quest_id")?,
@@ -682,8 +802,7 @@ pub(crate) fn advance_missions(
             ))
         })
         .collect();
-    let mut task_totals: BTreeMap<_, _> = message_list(resources, "total_task_counts")
-        .iter()
+    let mut task_totals: BTreeMap<_, _> = message_iter(resources, "total_task_counts")
         .filter_map(|row| {
             Some((
                 i32_field(row, "condition_id")?,
@@ -691,8 +810,7 @@ pub(crate) fn advance_missions(
             ))
         })
         .collect();
-    let mut changed_task_totals: BTreeMap<_, _> = message_list(changed, "total_task_counts")
-        .iter()
+    let mut changed_task_totals: BTreeMap<_, _> = message_iter(changed, "total_task_counts")
         .filter_map(|row| {
             Some((
                 i32_field(row, "condition_id")?,
@@ -700,60 +818,6 @@ pub(crate) fn advance_missions(
             ))
         })
         .collect();
-    if let Some((event, delta)) = event {
-        if delta < 0 {
-            return Err(StateError::InvalidRequest);
-        }
-        let indexed_conditions = rules.mission_index.conditions_for_event(event);
-        if !indexed_conditions.is_empty()
-            && !event.starts_with("item_received:")
-            && !event.starts_with("quest_clear:")
-        {
-            // The index supplies the candidate conditions; aggregation keeps one
-            // deterministic update per condition when multiple rules reference
-            // the same event.
-            let deltas = progression::aggregate_deltas(
-                indexed_conditions
-                    .iter()
-                    .copied()
-                    .map(|condition_id| (condition_id, delta)),
-            );
-            for change in deltas {
-                if let Some(task) = rules
-                    .total_tasks
-                    .iter()
-                    .find(|task| task.condition_id == change.condition_id)
-                {
-                    if task.condition_id != 137 {
-                        let current = task_totals.get(&task.condition_id).copied().unwrap_or(0);
-                        let next = task.objective.advance(current, change.amount);
-                        update_task(resources, changed, task.condition_id, next)?;
-                        task_totals.insert(task.condition_id, next);
-                        changed_task_totals.insert(task.condition_id, next);
-                    }
-                }
-            }
-        } else {
-            for task in &rules.total_tasks {
-                if task.condition_id == 137 || !task.objective.matches(event) {
-                    continue;
-                }
-                let current = task_totals.get(&task.condition_id).copied().unwrap_or(0);
-                let next = state_counter_total(&task.objective, &item_totals, &quest_totals)
-                    .filter(|target| {
-                        // Keep a prior absolute update from being incremented again.
-                        changed_task_totals.contains_key(&task.condition_id) || *target > current
-                    })
-                    .map(|target| current.max(target))
-                    .unwrap_or_else(|| task.objective.advance(current, delta));
-                if next > current {
-                    update_task(resources, changed, task.condition_id, next)?;
-                    task_totals.insert(task.condition_id, next);
-                    changed_task_totals.insert(task.condition_id, next);
-                }
-            }
-        }
-    }
     for task in &rules.total_tasks {
         if let Some(state) = &task.objective.state {
             let count = objective_count(rules, resources, state);
@@ -771,19 +835,15 @@ pub(crate) fn advance_missions(
             // State-backed counters are projections of persisted resource state.
             // Reconcile both directions so stale accounts cannot award another
             // quest's milestone after an earlier mapping or duplicate-tick bug.
-            if !already_changed && event.is_none() && count != existing {
-                update_task(resources, changed, task.condition_id, count)?;
-                task_totals.insert(task.condition_id, count);
-                changed_task_totals.insert(task.condition_id, count);
-            } else if !already_changed && count > existing {
+            if !already_changed && count != existing {
                 update_task(resources, changed, task.condition_id, count)?;
                 task_totals.insert(task.condition_id, count);
                 changed_task_totals.insert(task.condition_id, count);
             }
         }
     }
-    let mut missions: BTreeMap<i32, DynamicMessage> = message_list(resources, "missions")
-        .into_iter()
+    let mut missions: BTreeMap<i32, DynamicMessage> = message_iter(resources, "missions")
+        .cloned()
         .filter_map(|row| Some((i32_field(&row, "mission_id")?, row)))
         .collect();
     for row in &rules.missions {
@@ -791,33 +851,7 @@ pub(crate) fn advance_missions(
             continue;
         }
         let old = missions.get(&row.id).cloned();
-        let mut state = old
-            .clone()
-            .unwrap_or(empty_message(proto, "blend.model.Mission")?);
-        state.set_field_by_name("mission_id", Value::I32(row.id));
-        if let Some(reset) = reset_at(row.reset_cycle, now) {
-            if message_i64_field(&state, "reset_at", "seconds") != Some(reset) {
-                state.set_field_by_name("count", Value::I32(0));
-                state.set_field_by_name("received_step_count", Value::I32(0));
-                state.set_field_by_name("reset_at", Value::Message(timestamp(proto, reset)?));
-            }
-        }
-        if let Some((event, delta)) = event {
-            let indexed_missions = rules.mission_index.missions_for_event(event);
-            let matches_event = if indexed_missions.is_empty() {
-                row.objective.matches(event)
-            } else {
-                indexed_missions.contains(&row.id)
-            };
-            if row.total_task_condition_id.is_none() && matches_event {
-                let cap = row.steps.last().map(|step| step.count).unwrap_or(0);
-                let count = row
-                    .objective
-                    .advance(i32_field(&state, "count").unwrap_or(0), delta)
-                    .min(cap);
-                state.set_field_by_name("count", Value::I32(count));
-            }
-        }
+        let mut state = mission_state(proto, row, old.clone(), now)?;
         if let Some(objective) = row
             .objective
             .state
@@ -844,9 +878,9 @@ pub(crate) fn advance_missions(
         let Some(reset) = reset_at(row.reset_cycle, now) else {
             continue;
         };
-        let old = message_list(resources, "mission_count_reward_states")
-            .into_iter()
-            .find(|state| i32_field(state, "category") == Some(row.category));
+        let old = message_iter(resources, "mission_count_reward_states")
+            .find(|state| i32_field(state, "category") == Some(row.category))
+            .cloned();
         if old
             .as_ref()
             .and_then(|s| message_i64_field(s, "reset_at", "seconds"))
@@ -1134,10 +1168,10 @@ pub(crate) fn synthesis_progress(
         if let Some(rule) = &mission.objective.synthesis {
             let delta = matches(rule);
             if delta > 0 {
-                let mut value = message_list(resources, "missions")
-                    .into_iter()
+                let existing = message_iter(resources, "missions")
                     .find(|r| i32_field(r, "mission_id") == Some(mission.id))
-                    .ok_or(StateError::InvalidRequest)?;
+                    .cloned();
+                let mut value = mission_state(proto, mission, existing, now)?;
                 let cap = mission.steps.last().map(|s| s.count).unwrap_or(0);
                 value.set_field_by_name(
                     "count",
