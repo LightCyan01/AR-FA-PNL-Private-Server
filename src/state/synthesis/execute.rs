@@ -34,7 +34,7 @@ pub(crate) fn reduce_synthesis(
     if count <= 0 || count > limit {
         return Err(StateError::InvalidRequest);
     }
-    if mode == SynthesisMode::Rental {
+    let rental_rank = if mode == SynthesisMode::Rental {
         let ranking_type = i32_field(request, "ranking_type").ok_or(StateError::InvalidRequest)?;
         let rank_number = i32_field(request, "rank_number").ok_or(StateError::InvalidRequest)?;
         if !(1..=3).contains(&ranking_type)
@@ -60,11 +60,19 @@ pub(crate) fn reduce_synthesis(
             Value::Message(timestamp(proto, now)?),
         );
         resources.set_field_by_name("status", Value::Message(status));
-    }
+        Some((ranking_type, rank_number))
+    } else {
+        None
+    };
 
     let mut character_ids = i32_list(request, "character_ids");
     let mut ingredient_id = optional_i32_field(request, "ingredient_id");
-    if matches!(mode, SynthesisMode::Easy | SynthesisMode::Rental) {
+    if let Some((ranking_type, rank_number)) = rental_rank {
+        let combination =
+            ranked_synthesis_combination(rules, recipe, &resources, ranking_type, rank_number)?;
+        character_ids = vec![combination.character1_id, combination.character2_id];
+        ingredient_id = Some(combination.ingredient_id);
+    } else if mode == SynthesisMode::Easy {
         character_ids = choose_synthesis_characters(rules, recipe, &resources, mode)?;
         ingredient_id = Some(choose_synthesis_ingredient(
             rules,
@@ -368,20 +376,13 @@ pub(crate) fn reduce_synthesis(
     response.set_field_by_name("changed_resources", Value::Message(changed));
     response.set_field_by_name("rewards", Value::List(rewards));
     if mode != SynthesisMode::Easy {
-        let great_success = random_below(100)? < rules.local_policy.great_success_rate;
-        response.set_field_by_name(
-            "grade",
-            Value::I32(if great_success {
-                3
-            } else if source_traits.iter().all(|candidate| candidate.active) {
-                2
-            } else {
-                0
-            }),
-        );
-        if great_success {
-            response.set_field_by_name("final_grade_up", Value::I32(1));
-        }
+        let (grade, start_grade_up, final_grade_up) = roll_synthesis_grade(
+            rules,
+            source_traits.iter().all(|candidate| candidate.active),
+        )?;
+        response.set_field_by_name("grade", Value::I32(grade));
+        response.set_field_by_name("start_grade_up", Value::I32(start_grade_up));
+        response.set_field_by_name("final_grade_up", Value::I32(final_grade_up));
         if let Some((_, index)) = best_result {
             response.set_field_by_name("drama_reward_index", Value::I32(index));
         }
@@ -390,6 +391,27 @@ pub(crate) fn reduce_synthesis(
         resources,
         response,
     })
+}
+
+fn roll_synthesis_grade(
+    rules: &SynthesisRules,
+    fully_linked: bool,
+) -> Result<(i32, i32, i32), StateError> {
+    let rate = rules.local_policy.great_success_rate.min(100);
+    let grade = if random_below(100)? < rate {
+        if fully_linked && random_below(100)? < rate {
+            4
+        } else {
+            3
+        }
+    } else if fully_linked {
+        2
+    } else {
+        0
+    };
+    // The client treats grade as final and subtracts both upgrade fields.
+    let final_grade_up = i32::from(grade == 4 || (grade == 3 && random_below(100)? < rate));
+    Ok((grade, 0, final_grade_up))
 }
 
 pub(crate) fn synthesis_trait_count(
@@ -468,6 +490,7 @@ pub(crate) fn choose_synthesis_characters(
     resources: &DynamicMessage,
     mode: SynthesisMode,
 ) -> Result<Vec<i32>, StateError> {
+    let needs_traits = synthesis_trait_count(rules, recipe)? > 0;
     let owned: Vec<i32> = message_list(resources, "characters")
         .iter()
         .filter_map(|character| i32_field(character, "character_id"))
@@ -486,9 +509,10 @@ pub(crate) fn choose_synthesis_characters(
             &character.battle_trait_ids,
             &character.equipment_trait_ids,
         );
-        if !traits
-            .iter()
-            .any(|trait_id| synthesis_trait_valid(rules, recipe, *trait_id))
+        if (needs_traits
+            && !traits
+                .iter()
+                .any(|trait_id| synthesis_trait_valid(rules, recipe, *trait_id)))
             || (mode != SynthesisMode::Rental && !owned.contains(id))
             || selected.contains(id)
         {
@@ -508,6 +532,7 @@ pub(crate) fn choose_synthesis_ingredient(
     resources: Option<&DynamicMessage>,
     count: i32,
 ) -> Result<i32, StateError> {
+    let needs_traits = synthesis_trait_count(rules, recipe)? > 0;
     rules
         .ingredients
         .iter()
@@ -520,9 +545,10 @@ pub(crate) fn choose_synthesis_ingredient(
                 &ingredient.battle_trait_ids,
                 &ingredient.equipment_trait_ids,
             );
-            traits
-                .iter()
-                .any(|trait_id| synthesis_trait_valid(rules, recipe, *trait_id))
+            (!needs_traits
+                || traits
+                    .iter()
+                    .any(|trait_id| synthesis_trait_valid(rules, recipe, *trait_id)))
                 && (recipe.support_color_ids.is_empty()
                     || recipe
                         .support_color_ids
@@ -1100,49 +1126,19 @@ pub(crate) fn updated_recipe_message(
     Ok(recipe)
 }
 
-pub(crate) fn reduce_synthesis_ranking(
-    proto: &ProtoRegistry,
-    rules: &SynthesisRules,
-    resources: &DynamicMessage,
-    request: &DynamicMessage,
-    now: i64,
-) -> Result<DynamicMessage, StateError> {
-    let recipe_id = i32_field(request, "recipe_id").ok_or(StateError::InvalidRequest)?;
-    let recipe = rules
-        .recipes
-        .iter()
-        .find(|recipe| recipe.id == recipe_id)
-        .ok_or(StateError::InvalidRequest)?;
-    if !recipe_present(resources, recipe_id) {
-        return Err(StateError::InvalidRequest);
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn synthesis_grade_contract_covers_all_values() {
+        let mut rules = load_synthesis_rules().unwrap();
+        rules.local_policy.great_success_rate = 0;
+        assert_eq!(roll_synthesis_grade(&rules, false).unwrap(), (0, 0, 0));
+        assert_eq!(roll_synthesis_grade(&rules, true).unwrap(), (2, 0, 0));
+
+        rules.local_policy.great_success_rate = 100;
+        assert_eq!(roll_synthesis_grade(&rules, false).unwrap(), (3, 0, 1));
+        assert_eq!(roll_synthesis_grade(&rules, true).unwrap(), (4, 0, 1));
     }
-    let mut characters = recipe.support_character_ids.clone();
-    for id in rules.characters.iter().map(|row| row.id) {
-        if !characters.contains(&id) {
-            characters.push(id);
-        }
-    }
-    let ingredient_id = choose_synthesis_ingredient(rules, recipe, None, 0)?;
-    let mut ranks = Vec::new();
-    for pair in characters.windows(2).take(3) {
-        let mut rank = empty_message(proto, "blend.model.SynthesisCombinationRank")?;
-        rank.set_field_by_name("character1_id", Value::I32(pair[0]));
-        rank.set_field_by_name("character2_id", Value::I32(pair[1]));
-        rank.set_field_by_name(
-            "ingredient_id",
-            Value::Message(int32_value(proto, ingredient_id)?),
-        );
-        ranks.push(Value::Message(rank));
-    }
-    if ranks.is_empty() {
-        return Err(StateError::InvalidRequest);
-    }
-    let mut ranking = empty_message(proto, "blend.model.SynthesisCombinationRanking")?;
-    ranking.set_field_by_name("calculated_at", Value::Message(timestamp(proto, now)?));
-    ranking.set_field_by_name("ranks", Value::List(ranks));
-    let mut response = empty_message(proto, "blend.api.SynthesisCombinationRankingResponse")?;
-    for field in ["total", "weekly", "monthly"] {
-        response.set_field_by_name(field, Value::Message(ranking.clone()));
-    }
-    Ok(response)
 }
