@@ -90,6 +90,6 @@ Percentages are working implementation estimates, not client test pass rates.
 | Quests and battle objectives | 80% | Quest state and objective progression |
 | Combat skills, actions, Burst, turn order, and timeline | 70% | Skill selection/execution, Burst availability and placement, independent action/turn cursors, timeline construction, and advancement |
 | Damage, penetration, and combat effects | 65% | Base-stat composition, damage policy, penetration, hidden enemy defense modifiers, and effect application |
-| Missions and achievements | 75% | Resource-backed counter reconciliation and chapter projections; remaining catalog mappings and live awards |
+| Missions and achievements | 80% | Catalog-backed conditions, shared-alias projections, reward claims, and installed-client acceptance |
 | Synthesis | 85% | Grade/rating policy, three-slot bulk output, scoped combination ranking, rental selection, persistence, and live-client acceptance |
 | Integrated acceptance | 35% | Fresh-player and installed-client verification |
