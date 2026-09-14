@@ -27,8 +27,8 @@ pub(crate) fn objective_count(
 ) -> i32 {
     match objective {
         ResourceObjective::Rank => message_i32_field(resources, "status", "rank").unwrap_or(1),
-        ResourceObjective::Characters => message_list(resources, "characters").len() as i32,
-        ResourceObjective::Recipes => message_list(resources, "recipes").len() as i32,
+        ResourceObjective::Characters => message_iter(resources, "characters").count() as i32,
+        ResourceObjective::Recipes => message_iter(resources, "recipes").count() as i32,
         ResourceObjective::CharacterLevel { minimum, .. }
         | ResourceObjective::MemoriaLevel { minimum, .. } => {
             let character = matches!(objective, ResourceObjective::CharacterLevel { .. });
@@ -38,8 +38,7 @@ pub(crate) fn objective_count(
                 &rules.memoria_levels
             };
             let values: Vec<_> =
-                message_list(resources, if character { "characters" } else { "memorias" })
-                    .iter()
+                message_iter(resources, if character { "characters" } else { "memorias" })
                     .filter(|row| match objective {
                         ResourceObjective::CharacterLevel { character_ids, .. }
                             if !character_ids.is_empty() =>
@@ -68,8 +67,7 @@ pub(crate) fn objective_count(
                 values.into_iter().max().unwrap_or(0)
             }
         }
-        ResourceObjective::Board { field, minimum } => message_list(resources, "characters")
-            .iter()
+        ResourceObjective::Board { field, minimum } => message_iter(resources, "characters")
             .filter(|row| i32_field(row, field).unwrap_or(0) >= *minimum)
             .count() as i32,
         ResourceObjective::Equipment {
@@ -77,8 +75,7 @@ pub(crate) fn objective_count(
             tool_ids,
             trait_ids,
         } => {
-            let Some(character) = message_list(resources, "characters")
-                .into_iter()
+            let Some(character) = message_iter(resources, "characters")
                 .find(|r| i32_field(r, "character_id") == Some(*character_id))
             else {
                 return 0;
@@ -91,18 +88,15 @@ pub(crate) fn objective_count(
                 ]
                 .iter()
                 .any(|field| {
-                    let entity = message_i32_field(&character, field, "value");
-                    message_list(resources, "equipment_tools")
-                        .iter()
-                        .any(|tool| {
-                            entity.is_some()
-                                && i32_field(tool, "entity_id") == entity
-                                && i32_field(tool, "tool_id")
-                                    .is_some_and(|id| tool_ids.contains(&id))
-                                && message_list(tool, "traits").iter().any(|t| {
-                                    i32_field(t, "id").is_some_and(|id| trait_ids.contains(&id))
-                                })
-                        })
+                    let entity = message_i32_field(character, field, "value");
+                    message_iter(resources, "equipment_tools").any(|tool| {
+                        entity.is_some()
+                            && i32_field(tool, "entity_id") == entity
+                            && i32_field(tool, "tool_id").is_some_and(|id| tool_ids.contains(&id))
+                            && message_iter(tool, "traits").any(|t| {
+                                i32_field(t, "id").is_some_and(|id| trait_ids.contains(&id))
+                            })
+                    })
                 }),
             )
         }
@@ -110,21 +104,19 @@ pub(crate) fn objective_count(
             character_id,
             memoria_id,
         } => {
-            let entity = message_list(resources, "characters")
-                .iter()
+            let entity = message_iter(resources, "characters")
                 .find(|r| i32_field(r, "character_id") == Some(*character_id))
                 .and_then(|r| message_i32_field(r, "memoria_entity_id", "value"));
             i32::from(
                 entity.is_some()
-                    && message_list(resources, "memorias").iter().any(|r| {
+                    && message_iter(resources, "memorias").any(|r| {
                         i32_field(r, "entity_id") == entity
                             && i32_field(r, "memoria_id") == Some(*memoria_id)
                     }),
             )
         }
         ResourceObjective::OwnedCharacter { character_ids } => {
-            message_list(resources, "characters")
-                .iter()
+            message_iter(resources, "characters")
                 .filter(|row| {
                     i32_field(row, "character_id").is_some_and(|id| character_ids.contains(&id))
                 })
@@ -133,8 +125,7 @@ pub(crate) fn objective_count(
         ResourceObjective::CharacterRarity {
             character_ids,
             initial_rarity,
-        } => message_list(resources, "characters")
-            .iter()
+        } => message_iter(resources, "characters")
             .filter(|row| {
                 i32_field(row, "character_id").is_some_and(|id| character_ids.contains(&id))
             })
@@ -143,24 +134,20 @@ pub(crate) fn objective_count(
             .max()
             .unwrap_or(0),
         ResourceObjective::OwnedMemoria { memoria_id } => i32::from(
-            message_list(resources, "memorias")
-                .iter()
+            message_iter(resources, "memorias")
                 .any(|row| i32_field(row, "memoria_id") == Some(*memoria_id)),
         ),
-        ResourceObjective::MemoriaLimit { memoria_id } => message_list(resources, "memorias")
-            .iter()
+        ResourceObjective::MemoriaLimit { memoria_id } => message_iter(resources, "memorias")
             .filter(|row| i32_field(row, "memoria_id") == Some(*memoria_id))
             .filter_map(|row| i32_field(row, "limit_break"))
             .max()
             .unwrap_or(0),
-        ResourceObjective::Research { group_id } => message_list(resources, "research_groups")
-            .iter()
+        ResourceObjective::Research { group_id } => message_iter(resources, "research_groups")
             .find(|row| i32_field(row, "group_id") == Some(*group_id))
             .and_then(|row| i32_field(row, "level"))
             .unwrap_or(0),
         ResourceObjective::Communication { character_ids } => {
-            message_list(resources, "communication_states")
-                .iter()
+            message_iter(resources, "communication_states")
                 .filter(|row| {
                     i32_field(row, "character_id").is_some_and(|id| character_ids.contains(&id))
                 })
@@ -168,8 +155,7 @@ pub(crate) fn objective_count(
                 .max()
                 .unwrap_or(0)
         }
-        ResourceObjective::NeoOpen => message_list(resources, "characters")
-            .iter()
+        ResourceObjective::NeoOpen => message_iter(resources, "characters")
             .filter(|row| {
                 i32_field(row, "growboard_neo_current_page").unwrap_or(1) > 1
                     || i32_field(row, "growboard_neo_panel_bits").unwrap_or(0) != 0
@@ -182,15 +168,13 @@ pub(crate) fn objective_count(
             .max()
             .unwrap_or(0),
         ResourceObjective::Housing { house_building_id } => {
-            message_list(resources, "house_building_states")
-                .iter()
+            message_iter(resources, "house_building_states")
                 .find(|row| i32_field(row, "house_building_id") == Some(*house_building_id))
                 .and_then(|row| i32_field(row, "level"))
                 .unwrap_or(0)
         }
         ResourceObjective::PresentCloseness { present_ids } => {
-            message_list(resources, "present_states")
-                .iter()
+            message_iter(resources, "present_states")
                 .filter(|row| {
                     i32_field(row, "present_id").is_some_and(|id| present_ids.contains(&id))
                 })
@@ -198,16 +182,14 @@ pub(crate) fn objective_count(
                 .max()
                 .unwrap_or(0)
         }
-        ResourceObjective::StreetPhase { quest_id } => message_list(resources, "street_states")
-            .iter()
+        ResourceObjective::StreetPhase { quest_id } => message_iter(resources, "street_states")
             .find(|row| i32_field(row, "quest_id") == Some(*quest_id))
             .and_then(|row| i32_field(row, "phase"))
             .unwrap_or(0),
         ResourceObjective::ScoreRank {
             quest_ids,
             minimum_rank,
-        } => message_list(resources, "quest_states")
-            .iter()
+        } => message_iter(resources, "quest_states")
             .filter(|row| {
                 i32_field(row, "quest_id")
                     .is_some_and(|id| quest_ids.is_empty() || quest_ids.contains(&id))
@@ -215,8 +197,7 @@ pub(crate) fn objective_count(
             })
             .count() as i32,
         ResourceObjective::OwnedHomeMotion { motion_ids } => {
-            message_list(resources, "chara_home_motions")
-                .iter()
+            message_iter(resources, "chara_home_motions")
                 .filter(|row| {
                     i32_field(row, "motion_id").is_some_and(|id| motion_ids.contains(&id))
                 })
@@ -226,8 +207,7 @@ pub(crate) fn objective_count(
             completed_mission_count(rules, resources, mission_ids).min(i32::MAX as usize) as i32
         }
         ResourceObjective::QuestHighScoreTotal { quest_ids } => {
-            message_list(resources, "quest_states")
-                .iter()
+            message_iter(resources, "quest_states")
                 .filter(|state| {
                     i32_field(state, "quest_id").is_some_and(|id| quest_ids.contains(&id))
                 })
@@ -240,8 +220,7 @@ pub(crate) fn objective_count(
             .max()
             .unwrap_or(0),
         ResourceObjective::MultiMission { multi_mission_id } => {
-            let count = message_list(resources, "multi_missions")
-                .iter()
+            let count = message_iter(resources, "multi_missions")
                 .find(|row| i32_field(row, "multi_mission_id") == Some(*multi_mission_id))
                 .and_then(|row| i32_field(row, "count"))
                 .unwrap_or(0) as i64;
@@ -253,8 +232,7 @@ pub(crate) fn objective_count(
                 .max()
                 .unwrap_or(0)
         }
-        ResourceObjective::ShipLevel => message_list(resources, "ships")
-            .iter()
+        ResourceObjective::ShipLevel => message_iter(resources, "ships")
             .flat_map(|ship| {
                 rules
                     .ship_levels
@@ -265,7 +243,7 @@ pub(crate) fn objective_count(
             .max()
             .unwrap_or(0),
         ResourceObjective::ShipParty => {
-            i32::from(message_list(resources, "ship_parties").iter().any(|row| {
+            i32::from(message_iter(resources, "ship_parties").any(|row| {
                 !i32_list(row, "character_ids").is_empty()
                     || optional_i32_field(row, "main_memoria_entity_id").is_some()
                     || !i32_list(row, "sub_memoria_entity_ids").is_empty()
@@ -278,8 +256,7 @@ pub(crate) fn mission_count(resources: &DynamicMessage, rule: &MissionRule) -> i
     rule.total_task_condition_id
         .map(|id| total_task_count(resources, id))
         .unwrap_or_else(|| {
-            message_list(resources, "missions")
-                .iter()
+            message_iter(resources, "missions")
                 .find(|s| i32_field(s, "mission_id") == Some(rule.id))
                 .and_then(|s| i32_field(s, "count"))
                 .unwrap_or(0)
@@ -287,8 +264,7 @@ pub(crate) fn mission_count(resources: &DynamicMessage, rule: &MissionRule) -> i
 }
 
 pub(crate) fn received(resources: &DynamicMessage, id: i32) -> usize {
-    message_list(resources, "missions")
-        .iter()
+    message_iter(resources, "missions")
         .find(|s| i32_field(s, "mission_id") == Some(id))
         .and_then(|s| i32_field(s, "received_step_count"))
         .unwrap_or(0)

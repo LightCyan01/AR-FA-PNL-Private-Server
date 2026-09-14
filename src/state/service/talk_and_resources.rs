@@ -175,13 +175,18 @@ pub(crate) fn reduce_talk_event(
 }
 
 pub(crate) fn message_list(message: &DynamicMessage, field: &str) -> Vec<DynamicMessage> {
-    message
-        .get_field_by_name(field)
-        .and_then(|value| value.as_list().map(|values| values.to_vec()))
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|value| value.as_message().cloned())
-        .collect()
+    message_iter(message, field).cloned().collect()
+}
+
+pub(crate) fn message_iter<'a>(
+    message: &'a DynamicMessage,
+    field: &str,
+) -> impl Iterator<Item = &'a DynamicMessage> {
+    let values = match message.get_field_by_name(field) {
+        Some(std::borrow::Cow::Borrowed(Value::List(values))) => values.as_slice(),
+        _ => &[],
+    };
+    values.iter().filter_map(Value::as_message)
 }
 
 pub(crate) fn i32_list(message: &DynamicMessage, field: &str) -> Vec<i32> {
@@ -195,8 +200,7 @@ pub(crate) fn i32_list(message: &DynamicMessage, field: &str) -> Vec<i32> {
 }
 
 pub(crate) fn total_task_count(resources: &DynamicMessage, condition_id: i32) -> i32 {
-    message_list(resources, "total_task_counts")
-        .iter()
+    message_iter(resources, "total_task_counts")
         .find(|task| i32_field(task, "condition_id") == Some(condition_id))
         .and_then(|task| i32_field(task, "count"))
         .unwrap_or(0)
@@ -207,18 +211,23 @@ pub(crate) fn set_total_task_count(
     condition_id: i32,
     count: i32,
 ) -> Result<DynamicMessage, StateError> {
-    let mut tasks = message_list(resources, "total_task_counts");
-    let task = tasks
-        .iter_mut()
-        .find(|task| i32_field(task, "condition_id") == Some(condition_id))
+    let tasks = resources
+        .get_field_by_name_mut("total_task_counts")
+        .and_then(Value::as_list_mut)
+        .ok_or(StateError::InvalidRequest)?;
+    let index = tasks
+        .iter()
+        .position(|value| {
+            value
+                .as_message()
+                .is_some_and(|task| i32_field(task, "condition_id") == Some(condition_id))
+        })
+        .ok_or(StateError::InvalidRequest)?;
+    let task = tasks[index]
+        .as_message_mut()
         .ok_or(StateError::InvalidRequest)?;
     task.set_field_by_name("count", Value::I32(count));
-    let changed = task.clone();
-    resources.set_field_by_name(
-        "total_task_counts",
-        Value::List(tasks.into_iter().map(Value::Message).collect()),
-    );
-    Ok(changed)
+    Ok(task.clone())
 }
 
 pub(crate) fn set_changed_task_counts(changed: &mut DynamicMessage, tasks: Vec<DynamicMessage>) {
@@ -340,20 +349,9 @@ pub(crate) fn checked_i32(value: i64) -> Result<i32, StateError> {
 }
 
 pub(crate) fn quest_clear_count(resources: &DynamicMessage, quest_id: i32) -> i32 {
-    resources
-        .get_field_by_name("quest_states")
-        .and_then(|value| value.as_list().map(|quests| quests.to_vec()))
-        .and_then(|quests| {
-            quests.iter().find_map(|quest| {
-                let quest = quest.as_message()?;
-                (quest.get_field_by_name("quest_id")?.as_i32()? == quest_id).then(|| {
-                    quest
-                        .get_field_by_name("clear_count")
-                        .and_then(|value| value.as_i32())
-                        .unwrap_or_default()
-                })
-            })
-        })
+    message_iter(resources, "quest_states")
+        .find(|quest| i32_field(quest, "quest_id") == Some(quest_id))
+        .and_then(|quest| i32_field(quest, "clear_count"))
         .unwrap_or_default()
 }
 

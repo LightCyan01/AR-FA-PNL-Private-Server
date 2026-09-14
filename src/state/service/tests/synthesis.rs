@@ -598,6 +598,7 @@ fn synthesis_bonus_tools_keep_traits_and_slot_order() {
 
 #[test]
 fn synthesis_routes_use_complete_master_rules() {
+    let started = std::time::Instant::now();
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../schemas/atelier-resleriana-2.16.0.protoset"
@@ -870,5 +871,10 @@ fn synthesis_routes_use_complete_master_rules() {
             [5, 13, 44, 45].contains(&i32_field(value, "id").unwrap_or_default())
         }));
     }
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(15),
+        "synthesis mission reconciliation took {elapsed:?}"
+    );
 }
 use super::*;
