@@ -208,6 +208,98 @@ fn changed_quest_state_advances_story_mission_once() {
 }
 
 #[test]
+fn story_mission_aliases_project_instead_of_accumulate() {
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let rules = load_rules().unwrap();
+    let (task, quest_ids, mission) = rules
+        .total_tasks
+        .iter()
+        .find_map(|task| {
+            let Some(ResourceObjective::QuestClearAny { quest_ids }) = &task.objective.state else {
+                return None;
+            };
+            let mission = rules.missions.iter().find(|mission| {
+                mission.total_task_condition_id == Some(task.condition_id)
+                    && mission.objective.counter.as_ref().is_some_and(|counter| {
+                        quest_ids
+                            .iter()
+                            .any(|id| counter == &format!("quest_clear:{id}"))
+                    })
+            })?;
+            (quest_ids.len() > 1).then_some((task, quest_ids, mission))
+        })
+        .unwrap();
+    let now = mission
+        .start_at
+        .or_else(|| {
+            mission.event_tab_id.and_then(|id| {
+                rules
+                    .mission_event_tabs
+                    .iter()
+                    .find(|tab| tab.id == id)
+                    .and_then(|tab| tab.start_at)
+            })
+        })
+        .unwrap_or_else(unix_now)
+        + 1;
+    let mut resources = starter_resources(&proto, &load_fresh_rules().unwrap()).unwrap();
+    let mut changed = empty_message(&proto, "blend.model.Resources").unwrap();
+
+    for id in quest_ids {
+        let mut quest = empty_message(&proto, "blend.model.QuestState").unwrap();
+        quest.set_field_by_name("quest_id", Value::I32(*id));
+        quest.set_field_by_name("clear_count", Value::I32(1));
+        upsert_quest_state(&mut resources, quest);
+        advance_missions(
+            &proto,
+            &rules,
+            &mut resources,
+            &mut changed,
+            now,
+            Some((&format!("quest_clear:{id}"), 1)),
+        )
+        .unwrap();
+        assert_eq!(total_task_count(&resources, task.condition_id), 1);
+    }
+
+    let mut request = empty_message(&proto, "blend.api.MissionReceiveRequest").unwrap();
+    request.set_field_by_name("mission_ids", Value::List(vec![Value::I32(mission.id)]));
+    request.set_field_by_name("bulk_receive", Value::Bool(true));
+    let mut home = HomeState::default();
+    let (rewards, _) = claim_missions(
+        &proto,
+        &rules,
+        &mut resources,
+        &mut changed,
+        &mut home,
+        &request,
+        now,
+    )
+    .unwrap();
+    assert!(!rewards.is_empty());
+    let (replayed_rewards, _) = claim_missions(
+        &proto,
+        &rules,
+        &mut resources,
+        &mut changed,
+        &mut home,
+        &request,
+        now,
+    )
+    .unwrap();
+    assert!(replayed_rewards.is_empty());
+    println!(
+        "STORY_MISSION_ALIAS_OK condition={} aliases={}",
+        task.condition_id,
+        quest_ids.len()
+    );
+}
+
+#[test]
 fn pre_reconciled_quest_state_is_not_counted_again() {
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
