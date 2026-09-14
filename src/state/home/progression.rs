@@ -655,6 +655,15 @@ fn state_counter_total(
     item_totals: &BTreeMap<i32, i32>,
     quest_totals: &BTreeMap<i32, i32>,
 ) -> Option<i32> {
+    if let Some(ResourceObjective::QuestClearAny { quest_ids }) = &objective.state {
+        return Some(
+            quest_ids
+                .iter()
+                .map(|id| quest_totals.get(id).copied().unwrap_or_default())
+                .max()
+                .unwrap_or_default(),
+        );
+    }
     let mut total: i32 = 0;
     let mut found = false;
     for counter in objective.counter.iter().chain(&objective.counters) {
