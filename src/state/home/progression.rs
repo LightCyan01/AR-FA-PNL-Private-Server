@@ -634,31 +634,26 @@ fn state_counter_total(
     item_totals: &BTreeMap<i32, i32>,
     quest_totals: &BTreeMap<i32, i32>,
 ) -> Option<i32> {
-    objective
-        .counter
-        .iter()
-        .chain(&objective.counters)
-        .filter_map(|counter| {
-            if let Some(id) = counter
-                .strip_prefix("item_received:")
-                .and_then(|id| id.parse::<i32>().ok())
-            {
-                item_totals.get(&id).copied()
-            } else {
-                counter
-                    .strip_prefix("quest_clear:")
-                    .and_then(|id| id.parse::<i32>().ok())
-                    .and_then(|id| quest_totals.get(&id).copied())
-            }
-        })
-        .reduce(i32::saturating_add)
-}
-
-fn changed_task_count(changed: &DynamicMessage, condition_id: i32) -> Option<i32> {
-    message_list(changed, "total_task_counts")
-        .iter()
-        .find(|row| i32_field(row, "condition_id") == Some(condition_id))
-        .and_then(|row| i32_field(row, "count"))
+    let mut total: i32 = 0;
+    let mut found = false;
+    for counter in objective.counter.iter().chain(&objective.counters) {
+        let value = if let Some(id) = counter
+            .strip_prefix("item_received:")
+            .and_then(|id| id.parse::<i32>().ok())
+        {
+            item_totals.get(&id).copied().unwrap_or_default()
+        } else if let Some(id) = counter
+            .strip_prefix("quest_clear:")
+            .and_then(|id| id.parse::<i32>().ok())
+        {
+            quest_totals.get(&id).copied().unwrap_or_default()
+        } else {
+            return None;
+        };
+        found = true;
+        total = total.saturating_add(value);
+    }
+    found.then_some(total)
 }
 
 pub(crate) fn advance_missions(
@@ -687,6 +682,24 @@ pub(crate) fn advance_missions(
             ))
         })
         .collect();
+    let mut task_totals: BTreeMap<_, _> = message_list(resources, "total_task_counts")
+        .iter()
+        .filter_map(|row| {
+            Some((
+                i32_field(row, "condition_id")?,
+                i32_field(row, "count").unwrap_or(0),
+            ))
+        })
+        .collect();
+    let mut changed_task_totals: BTreeMap<_, _> = message_list(changed, "total_task_counts")
+        .iter()
+        .filter_map(|row| {
+            Some((
+                i32_field(row, "condition_id")?,
+                i32_field(row, "count").unwrap_or(0),
+            ))
+        })
+        .collect();
     if let Some((event, delta)) = event {
         if delta < 0 {
             return Err(StateError::InvalidRequest);
@@ -712,11 +725,11 @@ pub(crate) fn advance_missions(
                     .find(|task| task.condition_id == change.condition_id)
                 {
                     if task.condition_id != 137 {
-                        let next = task.objective.advance(
-                            total_task_count(resources, task.condition_id),
-                            change.amount,
-                        );
+                        let current = task_totals.get(&task.condition_id).copied().unwrap_or(0);
+                        let next = task.objective.advance(current, change.amount);
                         update_task(resources, changed, task.condition_id, next)?;
+                        task_totals.insert(task.condition_id, next);
+                        changed_task_totals.insert(task.condition_id, next);
                     }
                 }
             }
@@ -725,17 +738,18 @@ pub(crate) fn advance_missions(
                 if task.condition_id == 137 || !task.objective.matches(event) {
                     continue;
                 }
-                let current = total_task_count(resources, task.condition_id);
+                let current = task_totals.get(&task.condition_id).copied().unwrap_or(0);
                 let next = state_counter_total(&task.objective, &item_totals, &quest_totals)
                     .filter(|target| {
                         // Keep a prior absolute update from being incremented again.
-                        changed_task_count(changed, task.condition_id).is_some()
-                            || *target > current
+                        changed_task_totals.contains_key(&task.condition_id) || *target > current
                     })
                     .map(|target| current.max(target))
                     .unwrap_or_else(|| task.objective.advance(current, delta));
                 if next > current {
                     update_task(resources, changed, task.condition_id, next)?;
+                    task_totals.insert(task.condition_id, next);
+                    changed_task_totals.insert(task.condition_id, next);
                 }
             }
         }
@@ -743,15 +757,29 @@ pub(crate) fn advance_missions(
     for task in &rules.total_tasks {
         if let Some(state) = &task.objective.state {
             let count = objective_count(rules, resources, state);
-            if count > total_task_count(resources, task.condition_id) {
+            let existing = task_totals.get(&task.condition_id).copied().unwrap_or(0);
+            if count > existing {
                 update_task(resources, changed, task.condition_id, count)?;
+                task_totals.insert(task.condition_id, count);
+                changed_task_totals.insert(task.condition_id, count);
             }
         }
         let current = state_counter_total(&task.objective, &item_totals, &quest_totals);
-        if let Some(count) =
-            current.filter(|count| *count > total_task_count(resources, task.condition_id))
-        {
-            update_task(resources, changed, task.condition_id, count)?;
+        if let Some(count) = current {
+            let existing = task_totals.get(&task.condition_id).copied().unwrap_or(0);
+            let already_changed = changed_task_totals.get(&task.condition_id) == Some(&count);
+            // State-backed counters are projections of persisted resource state.
+            // Reconcile both directions so stale accounts cannot award another
+            // quest's milestone after an earlier mapping or duplicate-tick bug.
+            if !already_changed && event.is_none() && count != existing {
+                update_task(resources, changed, task.condition_id, count)?;
+                task_totals.insert(task.condition_id, count);
+                changed_task_totals.insert(task.condition_id, count);
+            } else if !already_changed && count > existing {
+                update_task(resources, changed, task.condition_id, count)?;
+                task_totals.insert(task.condition_id, count);
+                changed_task_totals.insert(task.condition_id, count);
+            }
         }
     }
     let mut missions: BTreeMap<i32, DynamicMessage> = message_list(resources, "missions")
