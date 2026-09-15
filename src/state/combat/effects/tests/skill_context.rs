@@ -342,6 +342,22 @@ fn conditional_memoria_and_equipment_follow_attack_context() {
         450
     );
     assert_eq!(contextual.contextual_summary(&actor(), &burst, false, 7), 0);
+    add_passive(&mut contextual, 120000114, 3_000, 0);
+    let mut enemy = message_list(&clean_state, "members")
+        .into_iter()
+        .find(|member| i32_field(member, "member_id") == Some(enemy_id))
+        .unwrap();
+    assert_eq!(
+        contextual.contextual_summary_against(&actor(), Some(&enemy), &physical, false, 4),
+        0
+    );
+    let mut enemy_status = member_status(&enemy, "enemy").unwrap();
+    enemy_status.set_field_by_name("is_broken", Value::Bool(true));
+    enemy.set_field_by_name("enemy", Value::Message(enemy_status));
+    assert_eq!(
+        contextual.contextual_summary_against(&actor(), Some(&enemy), &physical, false, 4),
+        3_000
+    );
 
     let mut static_state = clean_state.clone();
     let mut static_runtime = base_runtime();

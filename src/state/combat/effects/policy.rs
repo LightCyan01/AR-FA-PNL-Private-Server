@@ -119,7 +119,7 @@ pub(crate) fn secondary_damage(
 ) -> Result<i64, StateError> {
     let contextual = |summary| {
         runtime.map_or(0, |runtime| {
-            runtime.contextual_summary(source, skill, critical, summary)
+            runtime.contextual_summary_against(source, Some(target), skill, critical, summary)
         })
     };
     let power = (10_000i64

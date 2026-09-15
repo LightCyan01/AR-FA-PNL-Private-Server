@@ -86,8 +86,19 @@ impl Runtime {
         critical: bool,
         summary: i32,
     ) -> i64 {
+        self.contextual_summary_against(target, None, skill, critical, summary)
+    }
+
+    pub(crate) fn contextual_summary_against(
+        &self,
+        recipient: &DynamicMessage,
+        opponent: Option<&DynamicMessage>,
+        skill: &TutorialSkill,
+        critical: bool,
+        summary: i32,
+    ) -> i64 {
         let passive = if summary == 1 {
-            self.lamp_skill_damage(target)
+            self.lamp_skill_damage(recipient)
         } else {
             0
         } + self
@@ -98,13 +109,19 @@ impl Runtime {
                     && passive.rule.summary == summary
                     && passive.rule.trigger.is_none()
                     && contextual_rule(&passive.rule)
-                    && contextual_recipient(passive, target)
+                    && contextual_recipient(passive, recipient)
+                    && (!passive.rule.target_broken
+                        || opponent.is_some_and(|target| {
+                            member_status(target, "enemy")
+                                .ok()
+                                .is_some_and(|enemy| bool_field(&enemy, "is_broken"))
+                        }))
                     && context_matches(&passive.rule, passive.source_character_id, skill, critical)
             })
             .fold(0i64, |total, passive| {
                 total.saturating_add(i64::from(passive.value))
             });
-        let target_id = i32_field(target, "member_id").unwrap_or_default();
+        let target_id = i32_field(recipient, "member_id").unwrap_or_default();
         self.instances
             .iter()
             .filter(|instance| {
