@@ -58,10 +58,18 @@ pub(crate) fn build_action(
     before_skill_effect_results: Vec<DynamicMessage>,
     effect_results: Vec<DynamicMessage>,
     timeline_moves: Vec<DynamicMessage>,
-    action_type: i32,
-    battle_tool_number: Option<i32>,
+    mode: i32,
+    command_value: Option<i32>,
     total_damage: i64,
+    protection: Option<super::effects::Protection>,
 ) -> Result<DynamicMessage, StateError> {
+    let action_type = match mode {
+        0 | 7 => 0,
+        1 => 1,
+        8 => 2,
+        9 => 3,
+        _ => return Err(StateError::InvalidRequest),
+    };
     let mut action = empty_message(proto, "blend.model.BattleAction")?;
     action.set_field_by_name("number", Value::I32(number));
     action.set_field_by_name("state", Value::Message(state));
@@ -96,13 +104,29 @@ pub(crate) fn build_action(
         "timeline_moves",
         Value::List(timeline_moves.into_iter().map(Value::Message).collect()),
     );
-    if let Some(number) = battle_tool_number {
+    if let Some(value) = command_value {
+        let field = match mode {
+            1 => "battle_tool_number",
+            7 => "active_skill_type",
+            9 => "ship_tool_number",
+            _ => "",
+        };
+        if !field.is_empty() {
+            action.set_field_by_name(field, Value::Message(wrapper_i32(proto, value)?));
+        }
+    }
+    action.set_field_by_name("is_battle_tool_mix", Value::Bool(mode == 8));
+    action.set_field_by_name("total_dealt_hp_damage", Value::I64(total_damage));
+    if let Some(protection) = protection {
         action.set_field_by_name(
-            "battle_tool_number",
-            Value::Message(wrapper_i32(proto, number)?),
+            "protector_id",
+            Value::Message(wrapper_i32(proto, protection.protector_id)?),
+        );
+        action.set_field_by_name(
+            "protection_state_change_id",
+            Value::Message(wrapper_i32(proto, protection.state_change_id)?),
         );
     }
-    action.set_field_by_name("total_dealt_hp_damage", Value::I64(total_damage));
     Ok(action)
 }
 
@@ -140,6 +164,10 @@ mod tests {
             0,
             None,
             0,
+            Some(super::effects::Protection {
+                protector_id: 12,
+                state_change_id: 910038,
+            }),
         )
         .unwrap();
 
@@ -153,6 +181,11 @@ mod tests {
         assert_eq!(
             i32_field(&message_list(&action, "effect_results")[0], "effect_id"),
             Some(2)
+        );
+        assert_eq!(optional_i32_field(&action, "protector_id"), Some(12));
+        assert_eq!(
+            optional_i32_field(&action, "protection_state_change_id"),
+            Some(910038)
         );
     }
 }
@@ -203,6 +236,65 @@ pub(crate) fn battle_tool_effects(
     Ok(effects)
 }
 
+fn mixable_attribute(skill: &TutorialSkill) -> Option<i32> {
+    (skill.skill_effect_type == 1)
+        .then(|| {
+            skill
+                .attack_attributes
+                .iter()
+                .copied()
+                .find(|value| (5..=8).contains(value))
+        })
+        .flatten()
+}
+
+pub(crate) fn battle_tool_mix_skill(
+    rules: &TutorialRules,
+    first: &BattlePartyTool,
+    second: &BattlePartyTool,
+) -> Result<TutorialSkill, StateError> {
+    let first_skill = rule_skill(rules, rule_tool(rules, first.tool_id)?.skill_id)?;
+    let second_skill = rule_skill(rules, rule_tool(rules, second.tool_id)?.skill_id)?;
+    let first_attribute = mixable_attribute(first_skill).ok_or(StateError::InvalidRequest)?;
+    let second_attribute = mixable_attribute(second_skill).ok_or(StateError::InvalidRequest)?;
+    let source_power = |skill: &TutorialSkill| {
+        if skill.skill_power_type == 3 {
+            100
+        } else {
+            skill
+                .power
+                .max(rules.constants.battle_tool_mix_minimum_skill_power)
+        }
+    };
+    let power = ((f64::from(source_power(first_skill)) * f64::from(source_power(second_skill)))
+        .sqrt()
+        * f64::from(rules.constants.battle_tool_mix_skill_power_coefficient)
+        / 100.0)
+        .floor() as i32;
+    let all_target =
+        first_skill.skill_target_type == Some(5) && second_skill.skill_target_type == Some(5);
+    let threshold = if all_target {
+        rules.constants.battle_tool_mix_rank_threshold_all
+    } else {
+        rules.constants.battle_tool_mix_rank_threshold_single
+    };
+    let rank = if power >= threshold { 2 } else { 1 };
+    let mix = rules
+        .battle_tool_mixes
+        .iter()
+        .find(|row| {
+            row.rank == rank
+                && ((row.first_item_attack_attribute == first_attribute
+                    && row.second_item_attack_attribute == second_attribute)
+                    || (row.first_item_attack_attribute == second_attribute
+                        && row.second_item_attack_attribute == first_attribute))
+        })
+        .ok_or(StateError::InvalidRequest)?;
+    let mut skill = rule_skill(rules, mix.skill_id)?.clone();
+    skill.power = power;
+    Ok(skill)
+}
+
 pub(crate) fn build_action_setup(
     proto: &ProtoRegistry,
     rules: &TutorialRules,
@@ -234,18 +326,120 @@ pub(crate) fn build_action_setup(
             ),
         );
         if i32_field(&state, "party_gauge").unwrap_or_default() >= rules.constants.max_party_gauge {
+            let battle_tool_selections =
+                build_battle_tool_selections(proto, rules, &state, runtime)?;
             setup.set_field_by_name(
                 "battle_tool_selections",
                 Value::List(
-                    build_battle_tool_selections(proto, rules, &state, runtime)?
+                    battle_tool_selections
+                        .iter()
+                        .cloned()
+                        .into_iter()
+                        .map(Value::Message)
+                        .collect(),
+                ),
+            );
+            setup.set_field_by_name(
+                "battle_tool_mix_selections",
+                Value::List(
+                    build_battle_tool_mix_selections(
+                        proto,
+                        rules,
+                        &state,
+                        actor_id,
+                        battle_tool_selections,
+                    )?
+                    .into_iter()
+                    .map(Value::Message)
+                    .collect(),
+                ),
+            );
+        }
+        if i32_field(&state, "bomb_gauge").unwrap_or_default() >= rules.constants.max_bomb_gauge {
+            setup.set_field_by_name(
+                "ship_tool_selections",
+                Value::List(
+                    build_ship_tool_selections(proto, rules, &state, runtime)?
                         .into_iter()
                         .map(Value::Message)
                         .collect(),
                 ),
             );
         }
+        setup.set_field_by_name(
+            "active_skill_selections",
+            Value::List(
+                build_active_skill_selections(proto, rules, &state, actor_id, resources, runtime)?
+                    .into_iter()
+                    .map(Value::Message)
+                    .collect(),
+            ),
+        );
     }
     Ok(setup)
+}
+
+fn build_battle_tool_mix_selections(
+    proto: &ProtoRegistry,
+    rules: &TutorialRules,
+    state: &DynamicMessage,
+    actor_id: i32,
+    ordinary: Vec<DynamicMessage>,
+) -> Result<Vec<DynamicMessage>, StateError> {
+    if !member_can_use_battle_tool_mix(rules, state, actor_id)? {
+        return Ok(Vec::new());
+    }
+
+    let tool_messages = message_list(state, "battle_tools");
+    let mut eligible = Vec::new();
+    for selection in ordinary {
+        let number = i32_field(&selection, "number").ok_or(StateError::InvalidRequest)?;
+        let tool = tool_messages
+            .iter()
+            .find(|tool| i32_field(tool, "number") == Some(number))
+            .ok_or(StateError::InvalidRequest)?;
+        let tool = battle_party_tool_from_state(rules, tool)?;
+        let skill = rule_skill(rules, rule_tool(rules, tool.tool_id)?.skill_id)?;
+        if mixable_attribute(skill).is_some() {
+            let mut mix = empty_message(proto, "blend.model.BattleSelectionBattleToolMix")?;
+            mix.set_field_by_name("number", Value::I32(number));
+            mix.set_field_by_name("is_all", Value::Bool(bool_field(&selection, "is_all")));
+            mix.set_field_by_name(
+                "targets",
+                Value::List(
+                    message_list(&selection, "targets")
+                        .into_iter()
+                        .map(Value::Message)
+                        .collect(),
+                ),
+            );
+            eligible.push(mix);
+        }
+    }
+    if eligible.len() < 2 {
+        eligible.clear();
+    }
+    Ok(eligible)
+}
+
+pub(crate) fn member_can_use_battle_tool_mix(
+    rules: &TutorialRules,
+    state: &DynamicMessage,
+    actor_id: i32,
+) -> Result<bool, StateError> {
+    let actor = message_list(state, "members")
+        .into_iter()
+        .find(|member| i32_field(member, "member_id") == Some(actor_id))
+        .ok_or(StateError::InvalidRequest)?;
+    let ally = member_status(&actor, "ally")?;
+    let character_id = i32_field(&ally, "current_character_id")
+        .or_else(|| i32_field(&ally, "character_id"))
+        .ok_or(StateError::InvalidRequest)?;
+    Ok(rules
+        .battle_characters
+        .iter()
+        .find(|character| character.id == character_id)
+        .is_some_and(|character| character.can_use_battle_tool_mix))
 }
 
 pub(crate) fn build_battle_tool_selections(
@@ -254,7 +448,6 @@ pub(crate) fn build_battle_tool_selections(
     state: &DynamicMessage,
     runtime: Option<&effects::Runtime>,
 ) -> Result<Vec<DynamicMessage>, StateError> {
-    let members = message_list(state, "members");
     let mut selections = Vec::new();
     for tool_message in message_list(state, "battle_tools") {
         if i32_field(&tool_message, "usage_count").unwrap_or_default() <= 0 {
@@ -264,43 +457,14 @@ pub(crate) fn build_battle_tool_selections(
         let tool = battle_party_tool_from_state(rules, &tool_message)?;
         let skill = rule_skill(rules, rule_tool(rules, tool.tool_id)?.skill_id)?;
         let target_type = skill.skill_target_type.ok_or(StateError::InvalidRequest)?;
-        let target_member_type = if matches!(target_type, 1 | 2 | 4) {
-            0
-        } else {
-            1
-        };
-        let mut targets = Vec::new();
-        for target in members.iter().filter(|member| {
-            member_type(member).ok() == Some(target_member_type) && bool_field(member, "is_alive")
-        }) {
-            let mut preview = empty_message(proto, "blend.model.BattleSelectionTarget")?;
-            preview.set_field_by_name("target_id", Value::I32(member_id(target)?));
-            if skill.skill_effect_type == 2 {
-                let hp = i32_field(target, "hp").unwrap_or_default().max(0);
-                let max_hp = i32_field(target, "max_hp").unwrap_or_default().max(0);
-                let source = current_actor(state)?;
-                let heal = policy_tool_heal(rules, &tool, skill, &source, target)?.min(max_hp - hp);
-                preview.set_field_by_name("hp_heal", Value::Message(wrapper_i32(proto, heal)?));
-            } else if skill.skill_effect_type == 1 {
-                let broken = target.has_field_by_name("enemy")
-                    && member_status(target, "enemy")
-                        .ok()
-                        .is_some_and(|enemy| bool_field(&enemy, "is_broken"));
-                let damage = policy_tool_damage(
-                    rules, &tool, &members, target, skill, runtime, broken, 10_000,
-                )?;
-                let attribute = preferred_attack_attribute(target, skill)?;
-                let resistance = target_resistance(target, attribute)?;
-                preview.set_field_by_name("hp_damage", Value::Message(wrapper_i64(proto, damage)?));
-                preview.set_field_by_name(
-                    "is_killed",
-                    Value::Bool(damage >= i64::from(i32_field(target, "hp").unwrap_or_default())),
-                );
-                preview.set_field_by_name("is_weak", Value::Bool(resistance < 0));
-                preview.set_field_by_name("is_resist", Value::Bool(resistance > 0));
-            }
-            targets.push(Value::Message(preview));
-        }
+        let targets = build_tool_selection_targets(
+            proto,
+            rules,
+            state,
+            skill,
+            std::slice::from_ref(&tool),
+            runtime,
+        )?;
         if !targets.is_empty() {
             let mut selection = empty_message(proto, "blend.model.BattleSelectionBattleTool")?;
             selection.set_field_by_name("number", Value::I32(number));
@@ -310,6 +474,126 @@ pub(crate) fn build_battle_tool_selections(
         }
     }
     Ok(selections)
+}
+
+fn build_character_selection_targets(
+    proto: &ProtoRegistry,
+    rules: &TutorialRules,
+    state: &DynamicMessage,
+    actor_id: i32,
+    skill: &TutorialSkill,
+    resources: Option<&DynamicMessage>,
+    runtime: Option<&effects::Runtime>,
+) -> Result<(i32, Vec<Value>), StateError> {
+    let actor = message_list(state, "members")
+        .into_iter()
+        .find(|member| i32_field(member, "member_id") == Some(actor_id))
+        .ok_or(StateError::InvalidRequest)?;
+    let actor_type = member_type(&actor)?;
+    let opponent_count = i32::try_from(
+        message_list(state, "members")
+            .iter()
+            .filter(|member| {
+                bool_field(member, "is_alive") && member_type(member).ok() != Some(actor_type)
+            })
+            .count(),
+    )
+    .map_err(|_| StateError::InvalidRequest)?;
+    let panel = battle_panel_multiplier(state);
+    let break_panel = battle_panel_break_multiplier(state);
+    let target_type = skill.skill_target_type.ok_or(StateError::InvalidRequest)?;
+    let target_member_type = if matches!(target_type, 1 | 2 | 4) {
+        0
+    } else {
+        1
+    };
+    let provocation_target = runtime.and_then(|runtime| runtime.provocation_target(actor_id));
+    let targets = message_list(state, "members")
+        .into_iter()
+        .filter(|member| {
+            (target_type == 6 || member_type(member).ok() == Some(target_member_type))
+                && (target_type != 1 || member_id(member).ok() == Some(actor_id))
+                && (target_type != 3
+                    || provocation_target
+                        .is_none_or(|target| member_id(member).ok() == Some(target)))
+                && bool_field(member, "is_alive")
+        })
+        .collect::<Vec<_>>();
+    let mut target_values = Vec::new();
+    for target in targets {
+        let target_id = member_id(&target)?;
+        let mut preview = empty_message(proto, "blend.model.BattleSelectionTarget")?;
+        preview.set_field_by_name("target_id", Value::I32(target_id));
+        if skill.skill_effect_type == 2 {
+            let hp = i32_field(&target, "hp").unwrap_or(0).max(0);
+            let max_hp = i32_field(&target, "max_hp").unwrap_or(0).max(0);
+            preview.set_field_by_name(
+                "hp_heal",
+                Value::Message(wrapper_i32(
+                    proto,
+                    effects::healing_amount(
+                        quest::heal_amount(&actor, &target, skill)?,
+                        &actor,
+                        &target,
+                    )?
+                    .min(max_hp - hp),
+                )?),
+            );
+        } else if skill.skill_effect_type == 1 {
+            let broken = member_status(&target, "enemy")
+                .ok()
+                .is_some_and(|enemy| bool_field(&enemy, "is_broken"));
+            let damage = policy_damage(
+                proto,
+                rules,
+                &actor,
+                &target,
+                skill,
+                resources,
+                runtime,
+                opponent_count,
+                panel,
+                broken,
+                false,
+                10_000,
+            )?;
+            let critical = policy_damage(
+                proto,
+                rules,
+                &actor,
+                &target,
+                skill,
+                resources,
+                runtime,
+                opponent_count,
+                panel,
+                broken,
+                true,
+                10_000,
+            )?;
+            let break_damage =
+                policy_break_damage(&actor, &target, skill, runtime, break_panel, false, 10_000)?;
+            let attribute = preferred_attack_attribute(&target, skill)?;
+            let resistance = target_resistance(&target, attribute)?;
+            preview.set_field_by_name("hp_damage", Value::Message(wrapper_i64(proto, damage)?));
+            preview.set_field_by_name(
+                "hp_damage_for_critical",
+                Value::Message(wrapper_i64(proto, critical)?),
+            );
+            preview.set_field_by_name(
+                "break_damage",
+                Value::Message(wrapper_i32(proto, break_damage)?),
+            );
+            preview.set_field_by_name(
+                "is_killed",
+                Value::Bool(damage >= i64::from(i32_field(&target, "hp").unwrap_or(0))),
+            );
+            preview.set_field_by_name("is_weak", Value::Bool(resistance < 0));
+            preview.set_field_by_name("is_resist", Value::Bool(resistance > 0));
+        }
+        target_values.push(Value::Message(preview));
+    }
+    Ok((target_type, target_values))
 }
 
 pub(crate) fn build_skill_selections(
@@ -329,93 +613,148 @@ pub(crate) fn build_skill_selections(
         .and_then(|gauge| i32_field(&gauge, "current_gauge"))
         .unwrap_or(0)
         >= rules.constants.burst_gauge_required_for_one_burst_skill;
-    let panel = battle_panel_multiplier(state);
-    let break_panel = battle_panel_break_multiplier(state);
     let mut selections = Vec::new();
     for selected in member_skills(&actor)? {
         if selected.skill_type == 3 && !burst_enabled {
             continue;
         }
         let skill = rule_skill(rules, selected.id)?;
-        let target_type = skill.skill_target_type.ok_or(StateError::InvalidRequest)?;
-        let target_member_type = if matches!(target_type, 1 | 2 | 4) {
-            0
-        } else {
-            1
-        };
-        let provocation_target = runtime.and_then(|runtime| runtime.provocation_target(actor_id));
-        let targets: Vec<_> = message_list(state, "members")
-            .into_iter()
-            .filter(|member| {
-                (target_type == 6 || member_type(member).ok() == Some(target_member_type))
-                    && (target_type != 1 || member_id(member).ok() == Some(actor_id))
-                    && (target_type != 3
-                        || provocation_target
-                            .is_none_or(|target| member_id(member).ok() == Some(target)))
-                    && bool_field(member, "is_alive")
-            })
-            .collect();
-        if targets.is_empty() {
+        let transformed = effects::skill_transformation(&actor, selected.id)?
+            .map(|(_, destination)| rule_skill(rules, destination))
+            .transpose()?;
+        let preview_skill = transformed.unwrap_or(skill);
+        let (target_type, target_values) = build_character_selection_targets(
+            proto, rules, state, actor_id, preview_skill, resources, runtime,
+        )?;
+        if target_values.is_empty() {
             continue;
         }
         let mut selection = empty_message(proto, "blend.model.BattleSelectionSkill")?;
         selection.set_field_by_name("skill_type", Value::I32(selected.skill_type));
         selection.set_field_by_name("skill_id", Value::I32(selected.id));
         selection.set_field_by_name("is_all", Value::Bool(matches!(target_type, 4 | 5)));
-        let mut target_values = Vec::new();
-        for target in targets {
-            let target_id = member_id(&target)?;
-            let mut preview = empty_message(proto, "blend.model.BattleSelectionTarget")?;
-            preview.set_field_by_name("target_id", Value::I32(target_id));
-            if skill.skill_effect_type == 2 {
-                let hp = i32_field(&target, "hp").unwrap_or(0).max(0);
-                let max_hp = i32_field(&target, "max_hp").unwrap_or(0).max(0);
-                preview.set_field_by_name(
-                    "hp_heal",
-                    Value::Message(wrapper_i32(
-                        proto,
-                        effects::healing_amount(
-                            quest::heal_amount(&actor, &target, skill)?,
-                            &actor,
-                            &target,
-                        )?
-                        .min(max_hp - hp),
-                    )?),
-                );
-            } else if skill.skill_effect_type == 1 {
-                let broken = member_status(&target, "enemy")
+        selection.set_field_by_name("targets", Value::List(target_values));
+        if let Some(lamp) = effects::predicted_skill_lamp(&actor, selected.id)? {
+            selection.set_field_by_name("all_skill_lamp", Value::I32(lamp));
+        }
+        selections.push(selection);
+    }
+    Ok(selections)
+}
+
+fn build_ship_tool_selections(
+    proto: &ProtoRegistry,
+    rules: &TutorialRules,
+    state: &DynamicMessage,
+    runtime: Option<&effects::Runtime>,
+) -> Result<Vec<DynamicMessage>, StateError> {
+    let mut selections = Vec::new();
+    for tool in message_list(state, "ship_tools") {
+        if i32_field(&tool, "usage_count").unwrap_or_default() <= 0 {
+            continue;
+        }
+        let number = i32_field(&tool, "number").ok_or(StateError::InvalidRequest)?;
+        let skill = rule_skill(
+            rules,
+            i32_field(&tool, "skill_id").ok_or(StateError::InvalidRequest)?,
+        )?;
+        let target_type = skill.skill_target_type.ok_or(StateError::InvalidRequest)?;
+        let targets = build_tool_selection_targets(proto, rules, state, skill, &[], runtime)?;
+        if targets.is_empty() {
+            continue;
+        }
+        let mut selection = empty_message(proto, "blend.model.BattleSelectionShipTool")?;
+        selection.set_field_by_name("number", Value::I32(number));
+        selection.set_field_by_name("is_all", Value::Bool(matches!(target_type, 4 | 5)));
+        selection.set_field_by_name("targets", Value::List(targets));
+        selections.push(selection);
+    }
+    Ok(selections)
+}
+
+fn build_tool_selection_targets(
+    proto: &ProtoRegistry,
+    rules: &TutorialRules,
+    state: &DynamicMessage,
+    skill: &TutorialSkill,
+    tools: &[BattlePartyTool],
+    runtime: Option<&effects::Runtime>,
+) -> Result<Vec<Value>, StateError> {
+    let members = message_list(state, "members");
+    let target_type = skill.skill_target_type.ok_or(StateError::InvalidRequest)?;
+    let target_member_type = if matches!(target_type, 1 | 2 | 4) {
+        0
+    } else {
+        1
+    };
+    let source = current_actor(state)?;
+    let mut targets = Vec::new();
+    for target in members.iter().filter(|member| {
+        member_type(member).ok() == Some(target_member_type) && bool_field(member, "is_alive")
+    }) {
+        let mut preview = empty_message(proto, "blend.model.BattleSelectionTarget")?;
+        preview.set_field_by_name("target_id", Value::I32(member_id(target)?));
+        if skill.skill_effect_type == 2 {
+            let hp = i32_field(target, "hp").unwrap_or_default().max(0);
+            let max_hp = i32_field(target, "max_hp").unwrap_or_default().max(0);
+            let heal = policy_tool_heal(rules, tools, skill, &source, target)?.min(max_hp - hp);
+            preview.set_field_by_name("hp_heal", Value::Message(wrapper_i32(proto, heal)?));
+        } else if skill.skill_effect_type == 1 {
+            let broken = target.has_field_by_name("enemy")
+                && member_status(target, "enemy")
                     .ok()
                     .is_some_and(|enemy| bool_field(&enemy, "is_broken"));
-                let damage = policy_damage(
-                    proto, rules, &actor, &target, skill, resources, runtime, panel, broken, false,
-                    10_000,
-                )?;
-                let critical = policy_damage(
-                    proto, rules, &actor, &target, skill, resources, runtime, panel, broken, true,
-                    10_000,
-                )?;
-                let break_damage =
-                    policy_break_damage(&actor, &target, skill, runtime, break_panel, 10_000)?;
-                let attribute = preferred_attack_attribute(&target, skill)?;
-                let resistance = target_resistance(&target, attribute)?;
-                preview.set_field_by_name("hp_damage", Value::Message(wrapper_i64(proto, damage)?));
-                preview.set_field_by_name(
-                    "hp_damage_for_critical",
-                    Value::Message(wrapper_i64(proto, critical)?),
-                );
-                preview.set_field_by_name(
-                    "break_damage",
-                    Value::Message(wrapper_i32(proto, break_damage)?),
-                );
-                preview.set_field_by_name(
-                    "is_killed",
-                    Value::Bool(damage >= i64::from(i32_field(&target, "hp").unwrap_or(0))),
-                );
-                preview.set_field_by_name("is_weak", Value::Bool(resistance < 0));
-                preview.set_field_by_name("is_resist", Value::Bool(resistance > 0));
-            }
-            target_values.push(Value::Message(preview));
+            let damage = policy_tool_damage(
+                rules, tools, &members, target, skill, runtime, broken, 10_000,
+            )?;
+            let attribute = preferred_attack_attribute(target, skill)?;
+            let resistance = target_resistance(target, attribute)?;
+            preview.set_field_by_name("hp_damage", Value::Message(wrapper_i64(proto, damage)?));
+            preview.set_field_by_name(
+                "is_killed",
+                Value::Bool(damage >= i64::from(i32_field(target, "hp").unwrap_or_default())),
+            );
+            preview.set_field_by_name("is_weak", Value::Bool(resistance < 0));
+            preview.set_field_by_name("is_resist", Value::Bool(resistance > 0));
         }
+        targets.push(Value::Message(preview));
+    }
+    Ok(targets)
+}
+
+pub(crate) fn build_active_skill_selections(
+    proto: &ProtoRegistry,
+    rules: &TutorialRules,
+    state: &DynamicMessage,
+    actor_id: i32,
+    resources: Option<&DynamicMessage>,
+    runtime: Option<&effects::Runtime>,
+) -> Result<Vec<DynamicMessage>, StateError> {
+    let actor = message_list(state, "members")
+        .into_iter()
+        .find(|member| i32_field(member, "member_id") == Some(actor_id))
+        .ok_or(StateError::InvalidRequest)?;
+    let active = message_list(&member_status(&actor, "ally")?, "active_skills");
+    let mut selections = Vec::new();
+    for selected in member_active_skills(&actor)? {
+        let available = active.iter().any(|candidate| {
+            i32_field(candidate, "active_skill_type") == Some(selected.skill_type)
+                && optional_i32_field(candidate, "rest_count").unwrap_or(0) > 0
+        });
+        if !available {
+            continue;
+        }
+        let skill = rule_skill(rules, selected.id)?;
+        let (target_type, target_values) = build_character_selection_targets(
+            proto, rules, state, actor_id, skill, resources, runtime,
+        )?;
+        if target_values.is_empty() {
+            continue;
+        }
+        let mut selection = empty_message(proto, "blend.model.BattleSelectionActiveSkill")?;
+        selection.set_field_by_name("active_skill_type", Value::I32(selected.skill_type));
+        selection.set_field_by_name("skill_id", Value::I32(selected.id));
+        selection.set_field_by_name("is_all", Value::Bool(matches!(target_type, 4 | 5)));
         selection.set_field_by_name("targets", Value::List(target_values));
         selections.push(selection);
     }
@@ -495,7 +834,7 @@ pub(crate) fn set_base_enemy_numbers(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn policy_tool_damage(
     rules: &TutorialRules,
-    tool: &BattlePartyTool,
+    tools: &[BattlePartyTool],
     members: &[DynamicMessage],
     target: &DynamicMessage,
     skill: &TutorialSkill,
@@ -539,18 +878,18 @@ pub(crate) fn policy_tool_damage(
     let resistance =
         (100 - target_resistance(target, attribute)? + if broken { 50 } else { 0 }).max(0) as i128;
     let magic_trait_bonus = if (5..=8).contains(&attribute) {
-        tool_trait_effect_total(rules, tool, 3_000_009)?
+        tool_trait_effects_total(rules, tools, 3_000_009)?
     } else {
         0
     };
     let attribute_trait_bonus = match attribute {
-        1 => tool_trait_effect_total(rules, tool, 3_000_374)?,
-        2 => tool_trait_effect_total(rules, tool, 3_000_375)?,
-        3 => tool_trait_effect_total(rules, tool, 3_000_376)?,
-        5 => tool_trait_effect_total(rules, tool, 3_000_377)?,
-        6 => tool_trait_effect_total(rules, tool, 3_000_379)?,
-        7 => tool_trait_effect_total(rules, tool, 3_000_378)?,
-        8 => tool_trait_effect_total(rules, tool, 3_000_380)?,
+        1 => tool_trait_effects_total(rules, tools, 3_000_374)?,
+        2 => tool_trait_effects_total(rules, tools, 3_000_375)?,
+        3 => tool_trait_effects_total(rules, tools, 3_000_376)?,
+        5 => tool_trait_effects_total(rules, tools, 3_000_377)?,
+        6 => tool_trait_effects_total(rules, tools, 3_000_379)?,
+        7 => tool_trait_effects_total(rules, tools, 3_000_378)?,
+        8 => tool_trait_effects_total(rules, tools, 3_000_380)?,
         _ => 0,
     };
     let trait_bonus = magic_trait_bonus
@@ -567,6 +906,18 @@ pub(crate) fn policy_tool_damage(
         (numerator * i128::from(incoming) / (denominator * 10_000 * penetration_denominator))
             .clamp(0, 9_999_999_999) as i64,
     )
+}
+
+fn tool_trait_effects_total(
+    rules: &TutorialRules,
+    tools: &[BattlePartyTool],
+    effect_id: i32,
+) -> Result<i32, StateError> {
+    tools.iter().try_fold(0i32, |total, tool| {
+        total
+            .checked_add(tool_trait_effect_total(rules, tool, effect_id)?)
+            .ok_or(StateError::InvalidRequest)
+    })
 }
 
 pub(crate) fn tool_trait_effect_total(
@@ -602,15 +953,15 @@ pub(crate) fn tool_trait_effect_total(
 
 pub(crate) fn policy_tool_heal(
     rules: &TutorialRules,
-    tool: &BattlePartyTool,
+    tools: &[BattlePartyTool],
     skill: &TutorialSkill,
     source: &DynamicMessage,
     target: &DynamicMessage,
 ) -> Result<i32, StateError> {
-    let mut bonus = tool_trait_effect_total(rules, tool, 3_000_075)?;
+    let mut bonus = tool_trait_effects_total(rules, tools, 3_000_075)?;
     if skill.skill_target_type == Some(2) {
         bonus = bonus
-            .checked_add(tool_trait_effect_total(rules, tool, 3_000_073)?)
+            .checked_add(tool_trait_effects_total(rules, tools, 3_000_073)?)
             .ok_or(StateError::InvalidRequest)?;
     }
     let base = checked_i32(i64::from(skill.power.max(0)) * i64::from(10_000 + bonus) / 10_000)?;

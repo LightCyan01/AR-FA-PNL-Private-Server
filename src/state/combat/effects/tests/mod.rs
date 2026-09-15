@@ -1,9 +1,14 @@
 mod caps;
+mod cover;
+mod legacy_modifiers;
 mod lifetimes;
 mod maintenance;
 mod modifiers;
+mod nested;
 mod panels;
 mod penetration;
+mod scaling;
 mod skill_context;
 mod statuses;
+mod summons;
 mod support_scopes;

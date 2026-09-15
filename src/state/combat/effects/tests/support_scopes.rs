@@ -197,6 +197,10 @@ fn common_support_effects_keep_their_scope_and_conditions() {
             id: 91000906,
             value: 4_000,
         }],
+        limit_count: None,
+        max_lamp: 0,
+        require_command_value: false,
+        skill_destination: None,
         state_change_application_rate: 10_000,
         hp_damage_bonus: None,
     };
@@ -326,11 +330,26 @@ fn tutorial_skill_damage_effects_use_their_master_context() {
             id: 91000904,
             value: 2_000,
         }],
+        limit_count: None,
+        max_lamp: 0,
+        require_command_value: false,
+        skill_destination: None,
         state_change_application_rate: 10_000,
         hp_damage_bonus: None,
     };
     assert_eq!(instant_summary(&critical, &target, true, 7).unwrap(), 2_000);
     assert_eq!(instant_summary(&critical, &target, false, 7).unwrap(), 0);
+    let current_attack = TutorialSkill {
+        effects: vec![TutorialSkillEffect {
+            id: 3000044,
+            value: 5_000,
+        }],
+        ..critical.clone()
+    };
+    assert_eq!(
+        instant_summary(&current_attack, &target, false, 6).unwrap(),
+        5_000
+    );
 
     let mut state = empty_message(&proto, "blend.model.BattleState").unwrap();
     let mut actor = empty_message(&proto, "blend.model.BattleMember").unwrap();
@@ -460,7 +479,6 @@ fn target_physical_damage_down_changes_only_physical_multiplier() {
             &[effect],
             &[enemy_id],
             true,
-
             "after",
             None,
         )

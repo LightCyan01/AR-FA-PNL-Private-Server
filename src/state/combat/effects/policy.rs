@@ -1,6 +1,6 @@
 use super::registry::registry;
 use super::runtime::Runtime;
-use super::runtime_summary::instant_summary;
+use super::runtime_summary::instant_summary_for_source;
 use crate::state::combat::prelude::*;
 
 // Shared damage/healing policies consume the runtime's derived summaries.
@@ -38,6 +38,10 @@ pub(crate) fn incoming_multiplier_with_runtime(
     attribute: i32,
     runtime: Option<&Runtime>,
 ) -> i64 {
+    let target_id = i32_field(target, "member_id").unwrap_or_default();
+    if runtime.is_some_and(|runtime| runtime.damage_immunity(target_id, attribute)) {
+        return 0;
+    }
     let physical = (1..=3).contains(&attribute);
     let state_rate: i64 = message_list(target, "state_changes")
         .iter()
@@ -67,7 +71,6 @@ pub(crate) fn incoming_multiplier_with_runtime(
             }
         })
         .sum();
-    let target_id = i32_field(target, "member_id").unwrap_or_default();
     (10_000
         + state_rate
         + runtime
@@ -122,7 +125,7 @@ pub(crate) fn secondary_damage(
     let power = (10_000i64
         + i64::from(state_change_summary_value(source, 4))
         + contextual(4)
-        + instant_summary(skill, target, critical, 4)?
+        + instant_summary_for_source(Some(source), skill, target, critical, 4)?
         - i64::from(state_change_summary_value(source, 5))
         - contextual(5))
     .clamp(0, 1_000_000);
@@ -130,7 +133,7 @@ pub(crate) fn secondary_damage(
         (15_000i64
             + i64::from(state_change_summary_value(source, 7))
             + contextual(7)
-            + instant_summary(skill, target, critical, 7)?
+            + instant_summary_for_source(Some(source), skill, target, critical, 7)?
             + i64::from(state_change_summary_value(target, 17)))
         .clamp(0, 1_000_000)
     } else {
@@ -139,7 +142,7 @@ pub(crate) fn secondary_damage(
     let incoming = incoming_multiplier_for_skill(target, skill, runtime, critical)?;
     let penetration = (i64::from(state_change_summary_value(source, 10))
         + contextual(10)
-        + instant_summary(skill, target, critical, 10)?
+        + instant_summary_for_source(Some(source), skill, target, critical, 10)?
         + i64::from(state_change_summary_value(target, 19))
         + runtime.map_or(0, |runtime| {
             runtime.contextual_summary(target, skill, critical, 19)

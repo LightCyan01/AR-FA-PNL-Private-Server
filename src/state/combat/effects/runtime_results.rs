@@ -1,4 +1,4 @@
-use super::registry::Rule;
+use super::registry::{NestedActionRule, Rule};
 use crate::state::combat::prelude::*;
 
 pub(crate) fn display(
@@ -41,6 +41,39 @@ pub(super) fn effect_result(
             "dealt_state_change",
             Value::Message(display(proto, rule.state_id, value, rule.duration)?),
         );
+    }
+    Ok(result)
+}
+
+pub(super) fn nested_effect_result(
+    proto: &ProtoRegistry,
+    effect_id: i32,
+    source_id: i32,
+    target_id: i32,
+    is_skill: bool,
+    rule: &NestedActionRule,
+    outcome: i32,
+) -> Result<DynamicMessage, StateError> {
+    let mut result = empty_message(proto, "blend.model.BattleEffectResult")?;
+    result.set_field_by_name("effect_id", Value::I32(effect_id));
+    result.set_field_by_name("effector_id", Value::I32(source_id));
+    result.set_field_by_name(
+        "effect_target_id",
+        Value::Message(wrapper_i32(proto, target_id)?),
+    );
+    result.set_field_by_name("is_skill", Value::Bool(is_skill));
+    if rule.state_id > 0 {
+        result.set_field_by_name(
+            "deal_state_change_id",
+            Value::Message(wrapper_i32(proto, rule.state_id)?),
+        );
+        result.set_field_by_name("deal_state_change_result", Value::EnumNumber(outcome));
+        if outcome == 1 {
+            result.set_field_by_name(
+                "dealt_state_change",
+                Value::Message(display(proto, rule.state_id, 0, rule.duration)?),
+            );
+        }
     }
     Ok(result)
 }

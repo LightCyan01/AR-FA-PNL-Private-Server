@@ -72,10 +72,12 @@ fn observed_master_damage_passives_apply_once() {
     )
     .unwrap();
     apply_leader_passives(&rules, &mut party).unwrap();
-    assert!(party.iter().all(|member| member
-        .leader_passives
+    assert!(party
         .iter()
-        .any(|effect| effect.id == 72500125 && effect.value == 5000)));
+        .all(|member| member
+            .leader_passives
+            .iter()
+            .any(|passive| passive.effect.id == 72500125 && passive.effect.value == 5000)));
 
     let member = |character_id, is_leader| BattlePartyMember {
         character_id,
@@ -87,6 +89,7 @@ fn observed_master_damage_passives_apply_once() {
         integrated_stats: None,
         damage_bonus: 0,
         skills: Vec::new(),
+        ability_ids: Vec::new(),
         passives: Vec::new(),
         leader_passives: Vec::new(),
     };
@@ -97,7 +100,7 @@ fn observed_master_damage_passives_apply_once() {
         .all(|member| [72500160, 72500161].into_iter().all(|id| member
             .leader_passives
             .iter()
-            .any(|effect| effect.id == id && effect.value == 2000))));
+            .any(|passive| passive.effect.id == id && passive.effect.value == 2000))));
 
     let start = reduce_battle_start(&proto, &rules, resources, 101001002, 1).unwrap();
     assert!(message_list(&start.state, "members")
@@ -339,8 +342,8 @@ fn conditional_memoria_and_equipment_follow_attack_context() {
         trigger_runtime
             .trigger_attack_after(
                 &proto,
+                &rules,
                 &mut trigger_state,
-
                 actor_id,
                 &physical,
                 &[hit.clone()],
@@ -428,7 +431,14 @@ fn conditional_memoria_and_equipment_follow_attack_context() {
     )
     .unwrap();
     wind_runtime
-        .trigger_attack_after(&proto, &mut wind_state, actor_id, &wind, &[wind_hit])
+        .trigger_attack_after(
+            &proto,
+            &rules,
+            &mut wind_state,
+            actor_id,
+            &wind,
+            &[wind_hit],
+        )
         .unwrap();
     let wind_enemy = message_list(&wind_state, "members")
         .into_iter()

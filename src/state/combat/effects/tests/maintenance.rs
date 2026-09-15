@@ -290,6 +290,270 @@ fn maintenance_effects_cleanse_regenerate_and_restore_gauge() {
 }
 
 #[test]
+fn direct_gauge_effects_update_state_and_protocol_results() {
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let rules = load_tutorial_rules().unwrap();
+    let fresh = load_fresh_rules().unwrap();
+    let opened = reduce_talk_event(
+        &proto,
+        &fresh,
+        &rules,
+        starter_resources(&proto, &fresh).unwrap(),
+        101001001,
+        1,
+    )
+    .unwrap();
+    let start = reduce_battle_start(&proto, &rules, opened.resources, 101001002, 1).unwrap();
+    let transaction = start.start_txid;
+    let mut state = start.state;
+    let mut runtime = start.effects;
+    let mut members = message_list(&state, "members");
+    let source = members
+        .iter()
+        .find(|member| member_type(member).ok() == Some(0))
+        .and_then(|member| member_id(member).ok())
+        .unwrap();
+    let enemy = members
+        .iter()
+        .find(|member| member_type(member).ok() == Some(1))
+        .and_then(|member| member_id(member).ok())
+        .unwrap();
+    let source_member = members
+        .iter_mut()
+        .find(|member| member_id(member).ok() == Some(source))
+        .unwrap();
+    let mut burst = member_status(source_member, "burst_gauge").unwrap();
+    burst.set_field_by_name("current_gauge", Value::I32(100));
+    burst.set_field_by_name("is_enable", Value::Bool(true));
+    source_member.set_field_by_name("burst_gauge", Value::Message(burst));
+    let enemy_member = members
+        .iter_mut()
+        .find(|member| member_id(member).ok() == Some(enemy))
+        .unwrap();
+    let mut enemy_status = member_status(enemy_member, "enemy").unwrap();
+    let max_break = i32_field(&enemy_status, "max_break_gauge").unwrap();
+    enemy_status.set_field_by_name("break_gauge", Value::I32(max_break / 2));
+    enemy_member.set_field_by_name("enemy", Value::Message(enemy_status));
+    state.set_field_by_name(
+        "members",
+        Value::List(members.into_iter().map(Value::Message).collect()),
+    );
+
+    let burst_result = runtime
+        .apply_for_action_with_rules(
+            &proto,
+            &rules,
+            &mut state,
+            enemy,
+            32005428,
+            &[TutorialSkillEffect {
+                id: 76278002,
+                value: 2_000,
+            }],
+            &[source],
+            true,
+            "after",
+            None,
+            10_000,
+            b"gauge-test",
+            &transaction,
+            1,
+        )
+        .unwrap();
+    let source_member = message_list(&state, "members")
+        .into_iter()
+        .find(|member| member_id(member).ok() == Some(source))
+        .unwrap();
+    let burst = member_status(&source_member, "burst_gauge").unwrap();
+    assert_eq!(i32_field(&burst, "current_gauge"), Some(80));
+    assert!(!bool_field(&burst, "is_enable"));
+    assert_eq!(
+        message_i32_field(&burst_result[0], "add_burst_gauge", "value"),
+        Some(-20)
+    );
+
+    let break_result = runtime
+        .apply_for_action_with_rules(
+            &proto,
+            &rules,
+            &mut state,
+            enemy,
+            22000641,
+            &[TutorialSkillEffect {
+                id: 71179009,
+                value: 5_000,
+            }],
+            &[enemy],
+            true,
+            "after",
+            None,
+            10_000,
+            b"gauge-test",
+            &transaction,
+            2,
+        )
+        .unwrap();
+    let enemy_member = message_list(&state, "members")
+        .into_iter()
+        .find(|member| member_id(member).ok() == Some(enemy))
+        .unwrap();
+    let enemy_status = member_status(&enemy_member, "enemy").unwrap();
+    assert_eq!(i32_field(&enemy_status, "break_gauge"), Some(max_break));
+    assert_eq!(
+        message_i32_field(&break_result[0], "break_gauge_heal", "value"),
+        Some(max_break - max_break / 2)
+    );
+
+    let source_member = message_list(&state, "members")
+        .into_iter()
+        .find(|member| member_id(member).ok() == Some(source))
+        .unwrap();
+    let character_id = message_i32_field(&source_member, "ally", "character_id").unwrap();
+    let party = [BattlePartyMember {
+        character_id,
+        level: 1,
+        rarity: 3,
+        memoria_id: None,
+        position: 1,
+        is_leader: true,
+        integrated_stats: None,
+        damage_bonus: 0,
+        skills: Vec::new(),
+        ability_ids: Vec::new(),
+        passives: Vec::new(),
+        leader_passives: Vec::new(),
+    }];
+    let external = [
+        (
+            None,
+            26267010,
+            TutorialSkillEffect {
+                id: 2000392,
+                value: 10_000,
+            },
+        ),
+        (
+            None,
+            26267011,
+            TutorialSkillEffect {
+                id: 2000392,
+                value: 4_000,
+            },
+        ),
+    ];
+    let mut trigger_runtime = Runtime::initialize(
+        &proto,
+        &rules,
+        &mut state,
+        "gauge-trigger",
+        &party,
+        &external,
+    )
+    .unwrap();
+    assert_eq!(
+        i32_field(&state, "bomb_gauge"),
+        Some(rules.constants.max_bomb_gauge)
+    );
+    state.set_field_by_name("bomb_gauge", Value::I32(0));
+    let skill = rules
+        .skills
+        .iter()
+        .find(|skill| skill.skill_effect_type == 1)
+        .unwrap();
+    let triggered = trigger_runtime
+        .trigger_attack_after(&proto, &rules, &mut state, source, skill, &[])
+        .unwrap();
+    let expected = rules.constants.max_bomb_gauge * 4 / 10;
+    assert_eq!(i32_field(&state, "bomb_gauge"), Some(expected));
+    assert!(triggered.iter().any(|result| {
+        i32_field(result, "effect_id") == Some(2000392)
+            && message_i32_field(result, "add_bomb_gauge", "value") == Some(expected)
+    }));
+}
+
+#[test]
+fn skill_form_effect_replaces_the_selected_skill() {
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let rules = load_gameplay_rules().unwrap();
+    let fresh = load_fresh_rules().unwrap();
+    let opened = reduce_talk_event(
+        &proto,
+        &fresh,
+        &rules,
+        starter_resources(&proto, &fresh).unwrap(),
+        101001001,
+        1,
+    )
+    .unwrap();
+    let start = reduce_battle_start(&proto, &rules, opened.resources, 101001002, 1).unwrap();
+    let transaction = start.start_txid;
+    let mut state = start.state;
+    let mut runtime = start.effects;
+    let mut members = message_list(&state, "members");
+    let source = members
+        .iter()
+        .find(|member| member_type(member).ok() == Some(0))
+        .and_then(|member| member_id(member).ok())
+        .unwrap();
+    let member = members
+        .iter_mut()
+        .find(|member| member_id(member).ok() == Some(source))
+        .unwrap();
+    let mut ally = member_status(member, "ally").unwrap();
+    let mut skills = message_list(&ally, "skills");
+    skills[0].set_field_by_name("skill_id", Value::I32(11002386));
+    ally.set_field_by_name(
+        "skills",
+        Value::List(skills.into_iter().map(Value::Message).collect()),
+    );
+    member.set_field_by_name("ally", Value::Message(ally));
+    state.set_field_by_name(
+        "members",
+        Value::List(members.into_iter().map(Value::Message).collect()),
+    );
+
+    let results = runtime
+        .apply_for_action_with_rules(
+            &proto,
+            &rules,
+            &mut state,
+            source,
+            11002386,
+            &[TutorialSkillEffect {
+                id: 91001607,
+                value: 0,
+            }],
+            &[],
+            true,
+            "after",
+            None,
+            10_000,
+            b"skill-form-test",
+            &transaction,
+            1,
+        )
+        .unwrap();
+    assert_eq!(i32_field(&results[0], "effect_id"), Some(91001607));
+    let member = message_list(&state, "members")
+        .into_iter()
+        .find(|member| member_id(member).ok() == Some(source))
+        .unwrap();
+    assert!(
+        message_list(&member_status(&member, "ally").unwrap(), "skills")
+            .iter()
+            .any(|skill| i32_field(skill, "skill_id") == Some(11002541))
+    );
+}
+
+#[test]
 fn immunity_states_block_only_their_effect_category() {
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),

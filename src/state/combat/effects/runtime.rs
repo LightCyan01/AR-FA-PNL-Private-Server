@@ -1,4 +1,4 @@
-use super::registry::Rule;
+use super::registry::{NestedActionKind, NestedActionRule, Rule};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -31,6 +31,23 @@ pub(crate) struct Passive {
     pub(crate) source_type: i32,
 }
 
+#[derive(Clone, Deserialize, Serialize)]
+pub(crate) struct NestedActionInstance {
+    pub(crate) source: i32,
+    pub(crate) target: i32,
+    pub(crate) remaining: i32,
+    pub(crate) rule: NestedActionRule,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PendingAction {
+    pub(crate) actor_id: i32,
+    pub(crate) skill_id: i32,
+    pub(crate) target_id: i32,
+    pub(crate) kind: NestedActionKind,
+    pub(crate) burst_gauge_cost: i32,
+}
+
 #[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub(crate) struct Runtime {
@@ -42,6 +59,8 @@ pub(crate) struct Runtime {
     pub(crate) stat_rates: BTreeMap<i32, BTreeMap<String, i64>>,
     pub(crate) instances: Vec<Instance>,
     pub(crate) passives: Vec<Passive>,
+    pub(crate) lamp_abilities: BTreeMap<i32, BTreeSet<i32>>,
+    pub(crate) nested_actions: Vec<NestedActionInstance>,
     pub(crate) managed: BTreeMap<i32, BTreeSet<i32>>,
     pub(crate) unsupported: BTreeSet<i32>,
     pub(crate) panel_damage_taken: BTreeMap<i32, i32>,
@@ -53,6 +72,15 @@ pub(crate) struct Runtime {
 }
 
 impl Runtime {
+    pub(crate) fn damage_immunity(&self, member_id: i32, attribute: i32) -> bool {
+        self.instances.iter().any(|instance| {
+            instance.target == member_id
+                && instance.rule.operation == "damage_immunity"
+                && (instance.rule.attack_attributes.is_empty()
+                    || instance.rule.attack_attributes.contains(&attribute))
+        })
+    }
+
     pub(crate) fn stat_rate(&self, member_id: i32, name: &str) -> i64 {
         self.stat_rates
             .get(&member_id)

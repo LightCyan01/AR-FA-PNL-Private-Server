@@ -270,8 +270,8 @@ fn resumed_battle_uses_persisted_action_cursor() {
         .pop()
         .expect("tool turn must advertise the next player decision");
     let expected_number = i32_field(&next_setup, "number").unwrap();
-    let expected_turn = i32_field(&member_status(&next_setup, "state").unwrap(), "total_turn")
-        .unwrap();
+    let expected_turn =
+        i32_field(&member_status(&next_setup, "state").unwrap(), "total_turn").unwrap();
     assert!(expected_number > expected_turn);
 
     player.reopen();
@@ -286,7 +286,10 @@ fn resumed_battle_uses_persisted_action_cursor() {
         .expect("resume must advertise the persisted player decision");
     assert_eq!(i32_field(&setup, "number"), Some(expected_number));
     assert_eq!(
-        i32_field(&member_status(&history, "previous_state").unwrap(), "total_turn"),
+        i32_field(
+            &member_status(&history, "previous_state").unwrap(),
+            "total_turn"
+        ),
         Some(expected_turn)
     );
     assert!(!message_list(&setup, "skill_selections").is_empty());

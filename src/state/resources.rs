@@ -20,6 +20,12 @@ pub(crate) struct GachaMutation {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct BattlePassiveEffect {
+    pub(crate) ability_id: i32,
+    pub(crate) effect: TutorialSkillEffect,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct BattlePartyMember {
     pub(crate) character_id: i32,
     pub(crate) level: i32,
@@ -30,8 +36,9 @@ pub(crate) struct BattlePartyMember {
     pub(crate) integrated_stats: Option<BattleStats>,
     pub(crate) damage_bonus: i32,
     pub(crate) skills: Vec<TutorialCharacterSkill>,
-    pub(crate) passives: Vec<TutorialSkillEffect>,
-    pub(crate) leader_passives: Vec<TutorialSkillEffect>,
+    pub(crate) ability_ids: Vec<i32>,
+    pub(crate) passives: Vec<BattlePassiveEffect>,
+    pub(crate) leader_passives: Vec<BattlePassiveEffect>,
 }
 
 #[derive(Debug, Clone)]

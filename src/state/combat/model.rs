@@ -244,6 +244,21 @@ pub(crate) fn battle_resistance_message(
     Ok(message)
 }
 
+pub(crate) fn set_battle_field_effect(
+    proto: &ProtoRegistry,
+    state: &mut DynamicMessage,
+    field_effect_id: Option<i32>,
+) -> Result<(), StateError> {
+    let Some(field_effect_id) = field_effect_id else {
+        state.clear_field_by_name("field_effect");
+        return Ok(());
+    };
+    let mut field_effect = empty_message(proto, "blend.model.BattleFieldEffect")?;
+    field_effect.set_field_by_name("field_effect_id", Value::I32(field_effect_id));
+    state.set_field_by_name("field_effect", Value::Message(field_effect));
+    Ok(())
+}
+
 pub(crate) fn resource_character(
     resources: &DynamicMessage,
     character_id: i32,
@@ -265,6 +280,302 @@ pub(crate) fn level_for_exp(rules: &TutorialRules, exp: i32) -> Result<i32, Stat
         .max_by_key(|row| row.level)
         .map(|row| row.level)
         .ok_or_else(|| StateError::TutorialRules("character level table has no level 1".into()))
+}
+
+pub(crate) type BattleExternalPassive = (Option<i32>, i32, TutorialSkillEffect);
+
+pub(crate) fn scaled_ability_effects(
+    rules: &TutorialRules,
+    ability_ids: &[i32],
+    coefficient: i32,
+    source_character_id: Option<i32>,
+) -> Result<Vec<BattleExternalPassive>, StateError> {
+    if coefficient < 0 {
+        return Err(StateError::InvalidRequest);
+    }
+    let mut effects = Vec::new();
+    for ability_id in ability_ids {
+        let ability = rules
+            .abilities
+            .iter()
+            .find(|ability| ability.id == *ability_id)
+            .ok_or(StateError::InvalidRequest)?;
+        for effect in &ability.effects {
+            effects.push((
+                source_character_id,
+                *ability_id,
+                TutorialSkillEffect {
+                    id: effect.id,
+                    value: checked_i32(i64::from(effect.value) * i64::from(coefficient) / 10_000)?,
+                },
+            ));
+        }
+    }
+    Ok(effects)
+}
+
+fn main_memoria_coefficient(
+    rules: &atelier::AtelierRules,
+    main: &atelier::MemoriaRule,
+    sub_memorias: &[DynamicMessage],
+) -> Result<i32, StateError> {
+    let target_count = main.attack_attributes.len() + main.roles.len();
+    let discount_index = target_count.saturating_sub(1).min(
+        rules
+            .constants
+            .main_memoria_multi_discount_coef
+            .len()
+            .saturating_sub(1),
+    );
+    let discount = *rules
+        .constants
+        .main_memoria_multi_discount_coef
+        .get(discount_index)
+        .ok_or_else(|| StateError::TutorialRules("missing memoria discount coefficients".into()))?;
+    let mut total = rules.constants.base_coef_for_main_memoria;
+    for entity in sub_memorias {
+        let sub = rules
+            .memorias
+            .iter()
+            .find(|row| i32_field(entity, "memoria_id") == Some(row.id))
+            .ok_or(StateError::InvalidRequest)?;
+        let limit_break = usize::try_from(i32_field(entity, "limit_break").unwrap_or_default())
+            .map_err(|_| StateError::InvalidRequest)?;
+        let match_count = usize::from(
+            main.attack_attributes
+                .iter()
+                .any(|value| sub.attack_attributes.contains(value)),
+        ) + usize::from(main.roles.iter().any(|value| sub.roles.contains(value)));
+        let limit_break_bonus = *rules
+            .constants
+            .sub_memoria_limit_break_bonus_coef
+            .get(limit_break)
+            .ok_or(StateError::InvalidRequest)?;
+        let match_bonus = *rules
+            .constants
+            .memoria_match_bonus_coef
+            .get(match_count)
+            .ok_or(StateError::InvalidRequest)?;
+        let contribution = rules
+            .constants
+            .base_coef_for_main_memoria
+            .checked_add(limit_break_bonus)
+            .and_then(|value| value.checked_add(match_bonus))
+            .ok_or(StateError::InvalidRequest)?
+            .min(rules.constants.max_coef_per_one_memoria);
+        total = total
+            .checked_add(checked_i32(
+                i64::from(contribution) * i64::from(discount) / 10_000,
+            )?)
+            .ok_or(StateError::InvalidRequest)?;
+    }
+    Ok(total)
+}
+
+pub(crate) fn resolve_battle_ship(
+    proto: &ProtoRegistry,
+    rules: &TutorialRules,
+    atelier_rules: &atelier::AtelierRules,
+    resources: &DynamicMessage,
+    ship_id: Option<i32>,
+) -> Result<
+    (
+        DynamicMessage,
+        Vec<DynamicMessage>,
+        Vec<BattleExternalPassive>,
+    ),
+    StateError,
+> {
+    let mut battle_ship = empty_message(proto, "blend.model.BattleShip")?;
+    let Some(ship_id) = ship_id else {
+        return Ok((battle_ship, Vec::new(), Vec::new()));
+    };
+    let ship = message_list(resources, "ships")
+        .into_iter()
+        .find(|row| i32_field(row, "ship_id") == Some(ship_id))
+        .ok_or(StateError::InvalidRequest)?;
+    let rank = i32_field(&ship, "rank")
+        .filter(|value| *value > 0)
+        .unwrap_or(1);
+    let level = atelier::prelude::ship_level(
+        atelier_rules,
+        i32_field(&ship, "exp").unwrap_or_default(),
+        rank,
+    )?;
+    let party_number = i32_field(&ship, "party_number")
+        .filter(|value| *value > 0)
+        .ok_or(StateError::InvalidRequest)?;
+    let party = message_list(resources, "ship_parties")
+        .into_iter()
+        .find(|row| i32_field(row, "number") == Some(party_number))
+        .ok_or(StateError::InvalidRequest)?;
+
+    let character_ids = i32_list(&party, "character_ids");
+    if character_ids.len() > usize::try_from(level.max_character_count).unwrap_or(0)
+        || character_ids
+            .iter()
+            .enumerate()
+            .any(|(index, id)| character_ids[..index].contains(id))
+    {
+        return Err(StateError::InvalidRequest);
+    }
+    let mut members = Vec::new();
+    let mut support_ability_ids = Vec::new();
+    let mut passives = scaled_ability_effects(rules, &level.ability_ids, 10_000, None)?;
+    for character_id in character_ids {
+        let character = resource_character(resources, character_id)?;
+        let rarity = i32_field(&character, "rarity")
+            .filter(|value| *value > 0)
+            .ok_or(StateError::InvalidRequest)?;
+        let character_rule = rule_character(rules, character_id)?;
+        let support_ability_id = *character_rule
+            .support_ability_ids
+            .get(usize::try_from(rarity - 1).map_err(|_| StateError::InvalidRequest)?)
+            .ok_or(StateError::InvalidRequest)?;
+        support_ability_ids.push(support_ability_id);
+        passives.extend(scaled_ability_effects(
+            rules,
+            std::slice::from_ref(&support_ability_id),
+            level.support_ability_apply_rate,
+            Some(character_id),
+        )?);
+        let mut member = empty_message(proto, "blend.model.BattleShipMember")?;
+        member.set_field_by_name("character_id", Value::I32(character_id));
+        member.set_field_by_name("rarity", Value::I32(rarity));
+        members.push(Value::Message(member));
+    }
+    battle_ship.set_field_by_name("members", Value::List(members));
+    battle_ship.set_field_by_name(
+        "ship_support_ability_ids",
+        Value::List(level.ability_ids.iter().copied().map(Value::I32).collect()),
+    );
+    battle_ship.set_field_by_name(
+        "support_ability_ids",
+        Value::List(support_ability_ids.into_iter().map(Value::I32).collect()),
+    );
+    battle_ship.set_field_by_name(
+        "support_ability_value_coef",
+        Value::Message(wrapper_i32(proto, level.support_ability_apply_rate)?),
+    );
+
+    let sub_ids = i32_list(&party, "sub_memoria_entity_ids");
+    if sub_ids.len() > usize::try_from(level.max_sub_memoria_count).unwrap_or(0)
+        || sub_ids
+            .iter()
+            .enumerate()
+            .any(|(index, id)| sub_ids[..index].contains(id))
+    {
+        return Err(StateError::InvalidRequest);
+    }
+    let memorias = message_list(resources, "memorias");
+    let sub_memorias = sub_ids
+        .iter()
+        .map(|entity_id| {
+            memorias
+                .iter()
+                .find(|row| i32_field(row, "entity_id") == Some(*entity_id))
+                .cloned()
+                .ok_or(StateError::InvalidRequest)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if let Some(entity_id) = optional_i32_field(&party, "main_memoria_entity_id") {
+        if sub_ids.contains(&entity_id) {
+            return Err(StateError::InvalidRequest);
+        }
+        let entity = memorias
+            .iter()
+            .find(|row| i32_field(row, "entity_id") == Some(entity_id))
+            .ok_or(StateError::InvalidRequest)?;
+        let memoria = atelier_rules
+            .memorias
+            .iter()
+            .find(|row| i32_field(entity, "memoria_id") == Some(row.id))
+            .ok_or(StateError::InvalidRequest)?;
+        let limit_break = usize::try_from(i32_field(entity, "limit_break").unwrap_or_default())
+            .map_err(|_| StateError::InvalidRequest)?;
+        let ability_id = *memoria
+            .ability_ids
+            .get(limit_break)
+            .ok_or(StateError::InvalidRequest)?;
+        let coefficient = main_memoria_coefficient(atelier_rules, memoria, &sub_memorias)?;
+        battle_ship.set_field_by_name(
+            "main_memoria_ability_ids",
+            Value::List(vec![Value::I32(ability_id)]),
+        );
+        battle_ship.set_field_by_name(
+            "main_memoria_value_coef",
+            Value::Message(wrapper_i32(proto, coefficient)?),
+        );
+        passives.extend(scaled_ability_effects(
+            rules,
+            std::slice::from_ref(&ability_id),
+            coefficient,
+            None,
+        )?);
+    }
+
+    let tool_ids = i32_list(&party, "ship_tool_entity_ids");
+    if tool_ids.len() > usize::try_from(level.max_tool_count).unwrap_or(0)
+        || tool_ids
+            .iter()
+            .enumerate()
+            .any(|(index, id)| tool_ids[..index].contains(id))
+    {
+        return Err(StateError::InvalidRequest);
+    }
+    let owned_tools = message_list(resources, "ship_tools");
+    let mut tools = Vec::new();
+    for (index, entity_id) in tool_ids.into_iter().enumerate() {
+        let entity = owned_tools
+            .iter()
+            .find(|row| i32_field(row, "entity_id") == Some(entity_id))
+            .ok_or(StateError::InvalidRequest)?;
+        let tool_id = i32_field(entity, "tool_id").ok_or(StateError::InvalidRequest)?;
+        let tool_rule = rules
+            .ship_tools
+            .iter()
+            .find(|row| row.id == tool_id)
+            .ok_or(StateError::InvalidRequest)?;
+        let rank = i32_field(entity, "rank")
+            .filter(|value| *value > 0)
+            .unwrap_or(1);
+        let tool_level = atelier_rules
+            .ship_tool_levels
+            .iter()
+            .filter(|row| {
+                row.rank <= rank && row.exp <= i32_field(entity, "exp").unwrap_or_default()
+            })
+            .max_by_key(|row| row.level)
+            .ok_or(StateError::InvalidRequest)?;
+        let level_index =
+            usize::try_from(tool_level.level - 1).map_err(|_| StateError::InvalidRequest)?;
+        let mut tool = empty_message(proto, "blend.model.BattleShipTool")?;
+        tool.set_field_by_name(
+            "number",
+            Value::I32(i32::try_from(index + 1).map_err(|_| StateError::InvalidRequest)?),
+        );
+        tool.set_field_by_name("tool_id", Value::I32(tool_id));
+        tool.set_field_by_name(
+            "skill_id",
+            Value::I32(
+                *tool_rule
+                    .skill_ids
+                    .get(level_index)
+                    .ok_or(StateError::InvalidRequest)?,
+            ),
+        );
+        tool.set_field_by_name(
+            "usage_count",
+            Value::I32(
+                *tool_rule
+                    .usage_counts
+                    .get(level_index)
+                    .ok_or(StateError::InvalidRequest)?,
+            ),
+        );
+        tools.push(tool);
+    }
+    Ok((battle_ship, tools, passives))
 }
 
 pub(crate) fn resolve_account_party(
@@ -359,6 +670,7 @@ pub(crate) fn resolve_account_party(
             integrated_stats: Some(integrated_stats),
             damage_bonus: 0,
             skills: selected_character_skills(rules, character_id, Some(&character), rarity)?,
+            ability_ids: character_ability_ids(rules, character_id, Some(&character), rarity)?,
             passives,
             leader_passives: Vec::new(),
         });
@@ -480,6 +792,12 @@ pub(crate) fn resolve_fixed_party_with_rules(
                 enhanced.as_ref(),
                 rarity,
             )?,
+            ability_ids: character_ability_ids(
+                rules,
+                member.character_id,
+                enhanced.as_ref(),
+                rarity,
+            )?,
             passives: character_passives(rules, member.character_id, enhanced.as_ref(), rarity)?,
             leader_passives: Vec::new(),
         });
@@ -521,29 +839,31 @@ pub(crate) fn apply_leader_passives(
         let effects = effects
             .iter()
             .map(|effect| {
-                let multiplier = effects::registry()?
-                    .rules
-                    .iter()
-                    .find(|rule| rule.id == effect.id)
-                    .and_then(|rule| rule.condition.get("party_tag_id"))
-                    .map(|tag_id| {
-                        party
-                            .iter()
-                            .filter(|member| {
-                                rule_character(rules, member.character_id)
-                                    .is_ok_and(|character| character.tag_ids.contains(tag_id))
-                            })
-                            .count()
-                    })
-                    .unwrap_or(1);
-                Ok(TutorialSkillEffect {
-                    id: effect.id,
-                    value: effect
-                        .value
-                        .checked_mul(
-                            i32::try_from(multiplier).map_err(|_| StateError::InvalidRequest)?,
-                        )
-                        .ok_or(StateError::InvalidRequest)?,
+                let multiplier =
+                    effects::rule_for(effect.id, "passive", "ability", leader.ability_id)?
+                        .and_then(|rule| rule.condition.get("party_tag_id"))
+                        .map(|tag_id| {
+                            party
+                                .iter()
+                                .filter(|member| {
+                                    rule_character(rules, member.character_id)
+                                        .is_ok_and(|character| character.tag_ids.contains(tag_id))
+                                })
+                                .count()
+                        })
+                        .unwrap_or(1);
+                Ok(BattlePassiveEffect {
+                    ability_id: leader.ability_id,
+                    effect: TutorialSkillEffect {
+                        id: effect.id,
+                        value: effect
+                            .value
+                            .checked_mul(
+                                i32::try_from(multiplier)
+                                    .map_err(|_| StateError::InvalidRequest)?,
+                            )
+                            .ok_or(StateError::InvalidRequest)?,
+                    },
                 })
             })
             .collect::<Result<Vec<_>, StateError>>()?;
@@ -636,7 +956,35 @@ pub(crate) fn character_passives(
     character_id: i32,
     owned: Option<&DynamicMessage>,
     rarity: i32,
-) -> Result<Vec<TutorialSkillEffect>, StateError> {
+) -> Result<Vec<BattlePassiveEffect>, StateError> {
+    let ids = character_ability_ids(rules, character_id, owned, rarity)?;
+    let mut effects = Vec::new();
+    for id in ids {
+        let ability = rules
+            .abilities
+            .iter()
+            .find(|a| a.id == id)
+            .ok_or(StateError::InvalidRequest)?;
+        effects.extend(
+            ability
+                .effects
+                .iter()
+                .cloned()
+                .map(|effect| BattlePassiveEffect {
+                    ability_id: id,
+                    effect,
+                }),
+        );
+    }
+    Ok(effects)
+}
+
+pub(crate) fn character_ability_ids(
+    rules: &TutorialRules,
+    character_id: i32,
+    owned: Option<&DynamicMessage>,
+    rarity: i32,
+) -> Result<Vec<i32>, StateError> {
     let character = rule_character(rules, character_id)?;
     let count = rule_rarity(rules, rarity)?.ability_count.max(0) as usize;
     let mut ids: std::collections::BTreeSet<i32> =
@@ -660,16 +1008,7 @@ pub(crate) fn character_passives(
             }
         }
     }
-    let mut effects = Vec::new();
-    for id in ids {
-        let ability = rules
-            .abilities
-            .iter()
-            .find(|a| a.id == id)
-            .ok_or(StateError::InvalidRequest)?;
-        effects.extend(ability.effects.iter().cloned());
-    }
-    Ok(effects)
+    Ok(ids.into_iter().collect())
 }
 
 /// The battle snapshot is authoritative after start, including on resume.
@@ -682,6 +1021,23 @@ pub(crate) fn member_skills(
             Ok(TutorialCharacterSkill {
                 id: i32_field(skill, "skill_id").ok_or(StateError::InvalidRequest)?,
                 skill_type: i32_field(skill, "skill_type").ok_or(StateError::InvalidRequest)?,
+                rank_ids: Vec::new(),
+                evolved_ids: Vec::new(),
+            })
+        })
+        .collect()
+}
+
+pub(crate) fn member_active_skills(
+    member: &DynamicMessage,
+) -> Result<Vec<TutorialCharacterSkill>, StateError> {
+    message_list(&member_status(member, "ally")?, "active_skills")
+        .iter()
+        .map(|skill| {
+            Ok(TutorialCharacterSkill {
+                id: i32_field(skill, "skill_id").ok_or(StateError::InvalidRequest)?,
+                skill_type: i32_field(skill, "active_skill_type")
+                    .ok_or(StateError::InvalidRequest)?,
                 rank_ids: Vec::new(),
                 evolved_ids: Vec::new(),
             })
@@ -730,7 +1086,12 @@ pub(crate) fn build_ally_member(
     ally.set_field_by_name("is_leader", Value::Bool(party_member.is_leader));
     let mut skills = Vec::new();
     for selected in &party_member.skills {
-        rule_skill(rules, selected.id)?;
+        if rule_skill(rules, selected.id)?
+            .skill_destination
+            .is_some_and(|destination| !character.extra_skill_ids.contains(&destination))
+        {
+            return Err(StateError::InvalidRequest);
+        }
         let mut message = empty_message(proto, "blend.model.BattleSkill")?;
         message.set_field_by_name("skill_id", Value::I32(selected.id));
         message.set_field_by_name("skill_type", Value::I32(selected.skill_type));
@@ -739,6 +1100,22 @@ pub(crate) fn build_ally_member(
         skills.push(Value::Message(message));
     }
     ally.set_field_by_name("skills", Value::List(skills));
+    let active_skills = character
+        .active_skills
+        .iter()
+        .map(|selected| {
+            let skill = rule_skill(rules, selected.id)?;
+            let mut message = empty_message(proto, "blend.model.BattleActiveSkill")?;
+            message.set_field_by_name("skill_id", Value::I32(selected.id));
+            message.set_field_by_name("active_skill_type", Value::I32(selected.skill_type));
+            message.set_field_by_name(
+                "rest_count",
+                Value::Message(int32_value(proto, skill.limit_count.unwrap_or(0))?),
+            );
+            Ok(Value::Message(message))
+        })
+        .collect::<Result<Vec<_>, StateError>>()?;
+    ally.set_field_by_name("active_skills", Value::List(active_skills));
 
     let mut member = empty_message(proto, "blend.model.BattleMember")?;
     member.set_field_by_name("member_id", Value::I32(member_id));
@@ -752,7 +1129,24 @@ pub(crate) fn build_ally_member(
     member.set_field_by_name("initial_status", Value::Message(initial_status));
     member.set_field_by_name("current_status", Value::Message(current_status));
     member.set_field_by_name("resistance", Value::Message(resistance));
-    member.set_field_by_name("burst_gauge", Value::Message(burst_gauge(proto)?));
+    member.set_field_by_name(
+        "burst_gauge",
+        Value::Message(burst_gauge(
+            proto,
+            party_member
+                .ability_ids
+                .iter()
+                .filter_map(|ability_id| {
+                    rules
+                        .abilities
+                        .iter()
+                        .find(|ability| ability.id == *ability_id)
+                        .and_then(|ability| ability.burst_gauge_max)
+                })
+                .max()
+                .unwrap_or(rules.constants.burst_gauge_required_for_one_burst_skill),
+        )?),
+    );
     member.set_field_by_name("ally", Value::Message(ally));
     let mut summaries = if battle_id == 10000280 {
         vec![(7, 5000), (8, 1500), (9, 1500), (33, 5000)]
@@ -781,10 +1175,13 @@ pub(crate) fn build_ally_member(
     Ok(member)
 }
 
-pub(crate) fn burst_gauge(proto: &ProtoRegistry) -> Result<DynamicMessage, StateError> {
+pub(crate) fn burst_gauge(
+    proto: &ProtoRegistry,
+    max_gauge: i32,
+) -> Result<DynamicMessage, StateError> {
     let mut gauge = empty_message(proto, "blend.model.BattleBurstGauge")?;
     gauge.set_field_by_name("current_gauge", Value::I32(0));
-    gauge.set_field_by_name("max_gauge", Value::I32(100));
+    gauge.set_field_by_name("max_gauge", Value::I32(max_gauge));
     gauge.set_field_by_name("is_enable", Value::Bool(false));
     Ok(gauge)
 }
@@ -858,7 +1255,13 @@ pub(crate) fn build_enemy_member(
     member.set_field_by_name("initial_status", Value::Message(status.clone()));
     member.set_field_by_name("current_status", Value::Message(status));
     member.set_field_by_name("resistance", Value::Message(resistance));
-    member.set_field_by_name("burst_gauge", Value::Message(burst_gauge(proto)?));
+    member.set_field_by_name(
+        "burst_gauge",
+        Value::Message(burst_gauge(
+            proto,
+            rules.constants.burst_gauge_required_for_one_burst_skill,
+        )?),
+    );
     member.set_field_by_name("enemy", Value::Message(battle_enemy));
     Ok(member)
 }

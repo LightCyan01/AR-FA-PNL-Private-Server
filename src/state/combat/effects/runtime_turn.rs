@@ -1,6 +1,6 @@
 use super::registry::Expiry;
 use super::runtime::{Instance, Runtime};
-use super::runtime_match::{condition, context_matches, selected};
+use super::runtime_match::{condition, context_matches, selected_for_source_character};
 use super::runtime_results::{effect_result, turn_state_change_result};
 use crate::state::combat::prelude::*;
 use std::collections::BTreeSet;
@@ -10,6 +10,14 @@ impl Runtime {
         (self.pending_actor == actor)
             .then_some(self.pending_blind_rate)
             .unwrap_or_default()
+    }
+
+    pub(crate) fn evasion_rate(&self, target: i32) -> i32 {
+        self.instances
+            .iter()
+            .filter(|instance| instance.target == target && instance.rule.operation == "evasion")
+            .fold(0i32, |total, instance| total.saturating_add(instance.value))
+            .clamp(0, 10_000)
     }
 
     pub(crate) fn provocation_target(&self, actor: i32) -> Option<i32> {
@@ -58,7 +66,7 @@ impl Runtime {
             let remaining = i32_field(&change, "rest_count").unwrap_or_default();
             let handled = matches!(
                 state_id,
-                910037 | 940001 | 940002 | 940005 | 940006 | 940007
+                910037 | 910059 | 940001 | 940002 | 940005 | 940006 | 940007
             );
             if state_id == 910037 {
                 let heal = if value > 0 {
@@ -82,6 +90,11 @@ impl Runtime {
                     .max(0);
                 results.push(turn_state_change_result(
                     proto, actor, state_id, damage, 0, false,
+                )?);
+            } else if state_id == 910059 {
+                disabled = true;
+                results.push(turn_state_change_result(
+                    proto, actor, state_id, 0, 0, true,
                 )?);
             } else if state_id == 940005 {
                 if deterministic_roll(
@@ -120,6 +133,14 @@ impl Runtime {
         members[actor_index].set_field_by_name("hp", Value::I32(hp));
         members[actor_index].set_field_by_name("is_alive", Value::Bool(!killed));
         members[actor_index].set_field_by_name(
+            "is_stun",
+            Value::Bool(
+                retained
+                    .iter()
+                    .any(|change| i32_field(change, "state_change_id") == Some(910059)),
+            ),
+        );
+        members[actor_index].set_field_by_name(
             "state_changes",
             Value::List(retained.into_iter().map(Value::Message).collect()),
         );
@@ -148,16 +169,41 @@ impl Runtime {
         consumes_turn: bool,
         attack: bool,
     ) {
+        self.expire_with_attributes(actor, results, consumes_turn, attack, &[]);
+    }
+
+    pub(crate) fn expire_with_attributes(
+        &mut self,
+        actor: i32,
+        results: &[DynamicMessage],
+        consumes_turn: bool,
+        attack: bool,
+        attack_attributes: &[i32],
+    ) {
         let hits: BTreeSet<_> = results
             .iter()
             .filter(|r| attack && !bool_field(r, "is_miss") && !bool_field(r, "is_invalid"))
             .filter_map(|r| i32_field(r, "target_id"))
             .collect();
+        let attacked: BTreeSet<_> = results
+            .iter()
+            .filter(|result| attack && !bool_field(result, "is_invalid"))
+            .filter_map(|result| i32_field(result, "target_id"))
+            .collect();
         for instance in &mut self.instances {
+            let matching_attribute = instance.rule.attack_attributes.is_empty()
+                || attack_attributes.is_empty()
+                || instance
+                    .rule
+                    .attack_attributes
+                    .iter()
+                    .any(|attribute| attack_attributes.contains(attribute));
             let tick = match instance.rule.expiry {
                 Expiry::Turn => consumes_turn && instance.target == actor,
                 Expiry::Attack => attack && consumes_turn && instance.target == actor,
-                Expiry::Hit => hits.contains(&instance.target),
+                Expiry::Hit => matching_attribute && hits.contains(&instance.target),
+                Expiry::Attacked => matching_attribute && attacked.contains(&instance.target),
+                Expiry::Negative => false,
                 Expiry::Permanent => false,
             };
             if tick && instance.remaining > 0 {
@@ -190,6 +236,8 @@ impl Runtime {
         }
         self.acquired_panel_wave = wave;
         self.acquired_panel_turn = turn;
+        let actor_id = member_id(&current_actor(state)?)?;
+        self.trigger_panel_lamps(state, actor_id)?;
         let actor_type = member_type(&current_actor(state)?)?;
         let panel_id = effective_battle_panel_id(state);
         let mut members = message_list(state, "members");
@@ -220,25 +268,58 @@ impl Runtime {
     pub(crate) fn trigger_attack_after(
         &mut self,
         proto: &ProtoRegistry,
+        rules: &TutorialRules,
         state: &mut DynamicMessage,
         source_id: i32,
         skill: &TutorialSkill,
         results: &[DynamicMessage],
     ) -> Result<Vec<DynamicMessage>, StateError> {
-        if skill.skill_effect_type != 1 {
-            return Ok(Vec::new());
-        }
         let members = message_list(state, "members");
         let source = members
             .iter()
             .find(|member| i32_field(member, "member_id") == Some(source_id))
             .ok_or(StateError::InvalidRequest)?;
-        let source_character_id =
-            message_i32_field(source, "ally", "character_id").unwrap_or_default();
+        let source_type = member_type(source)?;
+        let mut triggered = Vec::new();
+        for passive in self.passives.clone().into_iter().filter(|passive| {
+            passive.rule.trigger.as_deref() == Some("action_after")
+                && match passive.rule.target.as_str() {
+                    "self" => passive.source == source_id,
+                    "allies" => passive.source_type == source_type,
+                    _ => false,
+                }
+        }) {
+            if passive.rule.operation != "bomb_gauge" {
+                return Err(StateError::InvalidRequest);
+            }
+            let maximum = rules.constants.max_bomb_gauge;
+            let current = i32_field(state, "bomb_gauge").unwrap_or_default().max(0);
+            let delta = i64::from(maximum).saturating_mul(i64::from(passive.value)) / 10_000;
+            let next = i64::from(current)
+                .saturating_add(delta)
+                .clamp(0, i64::from(maximum)) as i32;
+            state.set_field_by_name("bomb_gauge", Value::I32(next));
+            let mut result = effect_result(
+                proto,
+                passive.rule.id,
+                passive.source,
+                source_id,
+                false,
+                &passive.rule,
+                passive.value,
+            )?;
+            result.set_field_by_name(
+                "add_bomb_gauge",
+                Value::Message(wrapper_i32(proto, next - current)?),
+            );
+            triggered.push(result);
+        }
+        if skill.skill_effect_type != 1 {
+            return Ok(triggered);
+        }
         let hit_results = results
             .iter()
             .filter(|result| !bool_field(result, "is_miss") && !bool_field(result, "is_invalid"));
-        let mut triggered = Vec::new();
         for passive in self.passives.clone().into_iter().filter(|passive| {
             passive.source == source_id && passive.rule.trigger.as_deref() == Some("attack_after")
         }) {
@@ -255,11 +336,17 @@ impl Runtime {
                 if !bool_field(target, "is_alive")
                     || !context_matches(
                         &passive.rule,
-                        source_character_id,
+                        passive.source_character_id,
                         skill,
                         bool_field(result, "is_critical"),
                     )
-                    || !selected(&passive.rule, source, target, &[target_id])
+                    || !selected_for_source_character(
+                        &passive.rule,
+                        source,
+                        passive.source_character_id,
+                        target,
+                        &[target_id],
+                    )
                     || !condition(&passive.rule, source)
                 {
                     continue;
@@ -271,7 +358,7 @@ impl Runtime {
                 });
                 self.instances.push(Instance {
                     source: source_id,
-                    source_character_id,
+                    source_character_id: passive.source_character_id,
                     target: target_id,
                     value: passive.value,
                     remaining: passive.rule.duration,
