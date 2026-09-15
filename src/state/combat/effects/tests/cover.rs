@@ -98,6 +98,36 @@ fn guard_effects_redirect_supported_scopes_and_apply_damage_down() {
         2
     );
 
+    runtime
+        .apply_for_action(
+            &proto,
+            &mut state,
+            protector,
+            22001178,
+            &[TutorialSkillEffect {
+                id: 91001398,
+                value: 0,
+            }],
+            &[protector],
+            true,
+            "after",
+            None,
+            10_000,
+            b"cover-test",
+            "cover-test",
+            1,
+        )
+        .unwrap();
+    assert_eq!(
+        runtime
+            .instances
+            .iter()
+            .find(|instance| instance.rule.id == 91001398)
+            .unwrap()
+            .remaining,
+        2
+    );
+
     let all_cover = gameplay
         .skills
         .iter()
