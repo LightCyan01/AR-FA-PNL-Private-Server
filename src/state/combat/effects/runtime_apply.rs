@@ -243,6 +243,13 @@ impl Runtime {
                 // No queued choice exists; enemies sample skills at execution.
                 continue;
             }
+            let requested_targets = targets;
+            let requested_target_broken = members.iter().any(|member| {
+                requested_targets.contains(&member_id(member).unwrap_or_default())
+                    && member_status(member, "enemy")
+                        .ok()
+                        .is_some_and(|enemy| bool_field(&enemy, "is_broken"))
+            });
             let resolved_targets = resolved_targets(rule, &source, &members, panel_context, targets)?;
             let targets = resolved_targets.as_slice();
             if rule.operation == "skill_form" {
@@ -742,9 +749,13 @@ impl Runtime {
                 bool_field(m, "is_alive")
                     && selected(rule, &source, m, targets)
                     && (!rule.target_broken
-                        || member_status(m, "enemy")
-                            .ok()
-                            .is_some_and(|enemy| bool_field(&enemy, "is_broken")))
+                        || if requested_targets.contains(&member_id(m).unwrap_or_default()) {
+                            member_status(m, "enemy")
+                                .ok()
+                                .is_some_and(|enemy| bool_field(&enemy, "is_broken"))
+                        } else {
+                            requested_target_broken
+                        })
             }) {
                 let target_id = member_id(target)?;
                 if state_application_blocked(target, rule)? {

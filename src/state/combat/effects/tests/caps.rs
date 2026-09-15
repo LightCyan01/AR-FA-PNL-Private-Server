@@ -192,6 +192,8 @@ fn incoming_damage_effects_follow_master_lifetimes_and_break_policy() {
         ),
         ("regeneration", "targets", 910037, 3)
     );
+    let regeneration = rules.rules.iter().find(|rule| rule.id == 91001093).unwrap();
+    assert_eq!((regeneration.state_id, regeneration.duration), (910037, 2));
 
     runtime
         .apply_for_action(

@@ -39,12 +39,18 @@ fn common_support_effects_keep_their_scope_and_conditions() {
         member.set_field_by_name("state_change_summaries", Value::List(Vec::new()));
         member
     };
+    let mut high_magic = member(2, 0);
+    for field in ["current_status", "initial_status"] {
+        let mut status = member_status(&high_magic, field).unwrap();
+        status.set_field_by_name("magic", Value::I32(200));
+        high_magic.set_field_by_name(field, Value::Message(status));
+    }
     let mut state = empty_message(&proto, "blend.model.BattleState").unwrap();
     state.set_field_by_name(
         "members",
         Value::List(vec![
             Value::Message(member(1, 0)),
-            Value::Message(member(2, 0)),
+            Value::Message(high_magic),
             Value::Message(member(3, 1)),
         ]),
     );
@@ -151,6 +157,59 @@ fn common_support_effects_keep_their_scope_and_conditions() {
             None,
         )
         .unwrap();
+    let broken_magic = [TutorialSkillEffect {
+        id: 91001264,
+        value: 5_000,
+    }];
+    runtime
+        .apply_inner(
+            &proto,
+            &mut state,
+            1,
+            14002801,
+            &broken_magic,
+            &[3],
+            true,
+            "after",
+            None,
+            10_000,
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        message_list(&state, "members")
+            .into_iter()
+            .find(|member| i32_field(member, "member_id") == Some(2))
+            .and_then(|member| message_i32_field(&member, "current_status", "magic")),
+        Some(200)
+    );
+    let mut members = message_list(&state, "members");
+    let mut enemy_status = empty_message(&proto, "blend.model.BattleEnemy").unwrap();
+    enemy_status.set_field_by_name("is_broken", Value::Bool(true));
+    members
+        .iter_mut()
+        .find(|member| i32_field(member, "member_id") == Some(3))
+        .unwrap()
+        .set_field_by_name("enemy", Value::Message(enemy_status));
+    state.set_field_by_name(
+        "members",
+        Value::List(members.into_iter().map(Value::Message).collect()),
+    );
+    runtime
+        .apply_inner(
+            &proto,
+            &mut state,
+            1,
+            14002801,
+            &broken_magic,
+            &[3],
+            true,
+            "after",
+            None,
+            10_000,
+            None,
+        )
+        .unwrap();
 
     let members = message_list(&state, "members");
     let source = members
@@ -179,6 +238,7 @@ fn common_support_effects_keep_their_scope_and_conditions() {
         message_i32_field(source, "current_status", "attack"),
         Some(120)
     );
+    assert_eq!(message_i32_field(ally, "current_status", "magic"), Some(300));
     assert_eq!(incoming_multiplier_with_runtime(source, 1, None), 8_000);
     assert_eq!(incoming_multiplier_with_runtime(ally, 1, None), 2_000);
 
@@ -204,8 +264,12 @@ fn common_support_effects_keep_their_scope_and_conditions() {
         state_change_application_rate: 10_000,
         hp_damage_bonus: None,
     };
-    assert_eq!(instant_summary(&skill, enemy, false, 1).unwrap(), 0);
-    let mut broken = enemy.clone();
+    let mut unbroken = enemy.clone();
+    let mut enemy_status = member_status(&unbroken, "enemy").unwrap();
+    enemy_status.set_field_by_name("is_broken", Value::Bool(false));
+    unbroken.set_field_by_name("enemy", Value::Message(enemy_status));
+    assert_eq!(instant_summary(&skill, &unbroken, false, 1).unwrap(), 0);
+    let mut broken = unbroken;
     let mut enemy_status = empty_message(&proto, "blend.model.BattleEnemy").unwrap();
     enemy_status.set_field_by_name("is_broken", Value::Bool(true));
     broken.set_field_by_name("enemy", Value::Message(enemy_status));
