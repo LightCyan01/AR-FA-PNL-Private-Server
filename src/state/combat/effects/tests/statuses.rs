@@ -35,6 +35,101 @@ fn direct_statuses_stack_tick_and_gate_the_turn() {
         .find(|member| member_type(member).ok() == Some(1))
         .and_then(|member| member_id(&member).ok())
         .unwrap();
+    let poison_resistance = rule_for(72001062, "passive", "ability", 1990033)
+        .unwrap()
+        .unwrap()
+        .clone();
+    assert_eq!(poison_resistance.affected_state_ids, [940007]);
+    let all_resistance = rule_for(72001115, "passive", "ability", 0)
+        .unwrap()
+        .unwrap()
+        .clone();
+    assert!(all_resistance.affected_state_ids.is_empty());
+    let target_type = message_list(&state, "members")
+        .into_iter()
+        .find(|member| i32_field(member, "member_id") == Some(target))
+        .and_then(|member| member_type(&member).ok())
+        .unwrap();
+    runtime.passives.push(Passive {
+        source: target,
+        value: 3_000,
+        rule: poison_resistance,
+        source_character_id: 0,
+        source_type: target_type,
+    });
+    let resistance_action = (1..1_000)
+        .find(|number| {
+            deterministic_roll(
+                b"status-test",
+                &transaction,
+                *number,
+                b"state-change",
+                target,
+                0,
+            ) % 10_000
+                < 3_000
+        })
+        .unwrap();
+    let poison = TutorialSkillEffect {
+        id: 780080004,
+        value: 200,
+    };
+    let resisted = runtime
+        .apply_for_action(
+            &proto,
+            &mut state,
+            source,
+            0,
+            std::slice::from_ref(&poison),
+            &[target],
+            true,
+            "after",
+            None,
+            3_000,
+            b"status-test",
+            &transaction,
+            resistance_action,
+        )
+        .unwrap();
+    assert_eq!(
+        i32_or_enum_field(&resisted[0], "deal_state_change_result"),
+        Some(2)
+    );
+    let paralysis = runtime
+        .apply_for_action(
+            &proto,
+            &mut state,
+            source,
+            0,
+            &[TutorialSkillEffect {
+                id: 780023003,
+                value: 2_500,
+            }],
+            &[target],
+            true,
+            "after",
+            None,
+            3_000,
+            b"status-test",
+            &transaction,
+            resistance_action,
+        )
+        .unwrap();
+    assert_eq!(
+        i32_or_enum_field(&paralysis[0], "deal_state_change_result"),
+        Some(1)
+    );
+    runtime.passives.clear();
+    let mut members = message_list(&state, "members");
+    members
+        .iter_mut()
+        .find(|member| i32_field(member, "member_id") == Some(target))
+        .unwrap()
+        .set_field_by_name("state_changes", Value::List(Vec::new()));
+    state.set_field_by_name(
+        "members",
+        Value::List(members.into_iter().map(Value::Message).collect()),
+    );
     let explicit_poison_skill = gameplay
         .skills
         .iter()

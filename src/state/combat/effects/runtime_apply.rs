@@ -3,7 +3,9 @@ use super::registry::{registry, rule_for, Rule};
 use super::runtime::{Instance, Runtime};
 use super::runtime_form::apply_skill_form;
 use super::runtime_lamp::{is_lamp_mechanic, lamp_condition_matches};
-use super::runtime_match::{amount, condition, selected, state_application_blocked};
+use super::runtime_match::{
+    amount, condition, contextual_recipient, selected, state_application_blocked,
+};
 use super::runtime_results::{display, effect_result, status_display, status_effect_result};
 use super::runtime_targeting::resolved_targets;
 use crate::state::combat::prelude::*;
@@ -680,13 +682,37 @@ impl Runtime {
                         .saturating_mul(100);
                     let runtime_resistance = if registry()?.abnormal_state_ids.contains(&rule.state_id)
                     {
-                        self.instances
+                        let applies = |candidate: &Rule| {
+                            candidate.affected_state_ids.is_empty()
+                                || candidate.affected_state_ids.contains(&rule.state_id)
+                        };
+                        let active = self
+                            .instances
                             .iter()
                             .filter(|instance| {
                                 instance.target == target_id
                                     && instance.rule.operation == "abnormal_resistance"
+                                    && applies(&instance.rule)
                             })
-                            .fold(0i32, |total, instance| total.saturating_add(instance.value))
+                            .fold(0i32, |total, instance| total.saturating_add(instance.value));
+                        self.passives
+                            .iter()
+                            .filter(|passive| {
+                                passive.rule.operation == "abnormal_resistance"
+                                    && applies(&passive.rule)
+                                    && contextual_recipient(
+                                        passive,
+                                        &members[target_index],
+                                    )
+                                    && members.iter().any(|source| {
+                                        i32_field(source, "member_id") == Some(passive.source)
+                                            && bool_field(source, "is_alive")
+                                            && condition(&passive.rule, source)
+                                    })
+                            })
+                            .fold(active, |total, passive| {
+                                total.saturating_add(passive.value)
+                            })
                     } else {
                         0
                     };

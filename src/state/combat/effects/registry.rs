@@ -149,6 +149,8 @@ pub(crate) struct Rule {
     #[serde(default)]
     pub(crate) source_state_ids: Vec<i32>,
     #[serde(default)]
+    pub(crate) affected_state_ids: Vec<i32>,
+    #[serde(default)]
     pub(crate) skill_types: Vec<i32>,
     #[serde(default)]
     pub(crate) skill_target_types: Vec<i32>,
@@ -374,6 +376,10 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                 || r.target_character_ids.iter().any(|id| *id <= 0)
                 || r.source_character_ids.iter().any(|id| *id <= 0)
                 || r.source_state_ids.iter().any(|id| *id <= 0)
+                || r
+                    .affected_state_ids
+                    .iter()
+                    .any(|id| !data.abnormal_state_ids.contains(id))
                 || r.skill_types.iter().any(|id| !matches!(id, 1..=3))
                 || r.skill_target_types.iter().any(|id| !matches!(id, 1..=6))
                 || r.attack_attributes
