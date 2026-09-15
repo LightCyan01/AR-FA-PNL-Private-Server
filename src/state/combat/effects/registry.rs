@@ -273,7 +273,10 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                 || (r.owner_type.is_empty() != (r.owner_id == 0))
                 || (!r.owner_type.is_empty()
                     && !matches!(r.owner_type.as_str(), "skill" | "ability"))
-                || !matches!(r.mode.as_str(), "active" | "passive" | "instant")
+                || !matches!(
+                    r.mode.as_str(),
+                    "active" | "passive" | "instant" | "catalog"
+                )
                 || !matches!(
                     r.target.as_str(),
                     "self"
@@ -306,6 +309,7 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                         | "summons"
                         | "skill_form"
                         | "skill_damage_scale"
+                        | "scaling_metadata"
                         | "action_reroll"
                         | "cover"
                         | "timeline_shift"

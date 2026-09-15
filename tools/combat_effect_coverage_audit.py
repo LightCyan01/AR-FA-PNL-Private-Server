@@ -198,6 +198,7 @@ def audit(master: dict, rules: dict, source_hash: str) -> tuple[list[tuple[str, 
         executable = bool(modes & expected)
         if (
             not executable
+            and "catalog" not in modes
             and occurrence not in nested
             and occurrence not in lamp_mechanics
             and occurrence not in catalog_mechanics

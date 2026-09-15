@@ -38,7 +38,9 @@ impl Runtime {
         effect: &TutorialSkillEffect,
         leader: bool,
     ) -> Result<(), StateError> {
-        if is_lamp_ability_effect(ability_id, effect.id)? {
+        if is_lamp_ability_effect(ability_id, effect.id)?
+            || rule_for(effect.id, "catalog", "ability", ability_id)?.is_some()
+        {
             return Ok(());
         }
         let Some(rule) = rule_for(effect.id, "passive", "ability", ability_id)? else {

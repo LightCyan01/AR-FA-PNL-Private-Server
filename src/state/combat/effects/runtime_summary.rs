@@ -50,6 +50,9 @@ pub(crate) fn instant_summary_for_source(
 ) -> Result<i64, StateError> {
     let weak = target_resistance(target, preferred_attack_attribute(target, skill)?)? < 0;
     skill.effects.iter().try_fold(0i64, |total, effect| {
+        if rule_for(effect.id, "catalog", "skill", skill.id)?.is_some() {
+            return Ok(total);
+        }
         let Some(rule) = rule_for(effect.id, "instant", "skill", skill.id)? else {
             return Ok(total);
         };

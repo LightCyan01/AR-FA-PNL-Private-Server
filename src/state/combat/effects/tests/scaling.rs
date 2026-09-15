@@ -18,6 +18,13 @@ fn skill_damage_curves_follow_live_count_hp_and_direction() {
         "resistance",
         Value::Message(empty_message(&proto, "blend.model.BattleResistance").unwrap()),
     );
+    assert_eq!(
+        rule_for(91000949, "catalog", "skill", 11000286)
+            .unwrap()
+            .unwrap()
+            .operation,
+        "scaling_metadata"
+    );
 
     assert_eq!(
         scaled_skill_damage(skill(11000286), &source, 1).unwrap(),

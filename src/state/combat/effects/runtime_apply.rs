@@ -159,6 +159,9 @@ impl Runtime {
             .clone();
         let mut results = Vec::new();
         for (effect_index, effect) in effects.iter().enumerate() {
+            if rule_for(effect.id, "catalog", "skill", skill_id)?.is_some() {
+                continue;
+            }
             if is_lamp_mechanic(skill_id, effect.id)? {
                 continue;
             }
