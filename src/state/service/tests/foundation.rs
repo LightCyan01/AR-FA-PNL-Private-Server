@@ -679,6 +679,7 @@ fn combat_level_comes_from_persisted_character_exp() {
             }),
             damage_bonus: 0,
             skills: selected_character_skills(&tutorial_rules, character_id, None, rarity).unwrap(),
+            ability_ids: Vec::new(),
             passives: Vec::new(),
             leader_passives: Vec::new(),
         },

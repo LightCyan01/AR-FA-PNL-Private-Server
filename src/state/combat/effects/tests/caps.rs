@@ -106,7 +106,6 @@ fn outgoing_healing_stacks_to_its_master_cap() {
                 &mut state,
                 actor_id,
                 &[TutorialSkillEffect {
-
                     id: 91001230,
                     value: 1_000,
                 }],
@@ -179,6 +178,22 @@ fn incoming_damage_effects_follow_master_lifetimes_and_break_policy() {
     let generic = rules.rules.iter().find(|rule| rule.id == 91000966).unwrap();
     let magic = rules.rules.iter().find(|rule| rule.id == 91001263).unwrap();
     let break_taken = rules.rules.iter().find(|rule| rule.id == 91000973).unwrap();
+    let regeneration = rules
+        .rules
+        .iter()
+        .find(|rule| rule.id == 780017004)
+        .unwrap();
+    assert_eq!(
+        (
+            regeneration.operation.as_str(),
+            regeneration.target.as_str(),
+            regeneration.state_id,
+            regeneration.duration,
+        ),
+        ("regeneration", "targets", 910037, 3)
+    );
+    let regeneration = rules.rules.iter().find(|rule| rule.id == 91001093).unwrap();
+    assert_eq!((regeneration.state_id, regeneration.duration), (910037, 2));
 
     runtime
         .apply_for_action(
@@ -262,6 +277,10 @@ fn incoming_damage_effects_follow_master_lifetimes_and_break_policy() {
         attack_attributes: vec![1],
         skill_target_type: Some(3),
         effects: Vec::new(),
+        limit_count: None,
+        max_lamp: 0,
+        require_command_value: false,
+        skill_destination: None,
         state_change_application_rate: 10_000,
         hp_damage_bonus: None,
     };
@@ -270,7 +289,37 @@ fn incoming_damage_effects_follow_master_lifetimes_and_break_policy() {
         .find(|member| i32_field(member, "member_id") == Some(1))
         .unwrap();
     let before =
-        policy_break_damage(&source, &target, &skill, Some(&runtime), 100, 10_000).unwrap();
+        policy_break_damage(&source, &target, &skill, Some(&runtime), 100, false, 10_000).unwrap();
+    let critical_skill = TutorialSkill {
+        id: 11003048,
+        effects: vec![TutorialSkillEffect {
+            id: 91001310,
+            value: 5_000,
+        }],
+        ..skill.clone()
+    };
+    assert!(
+        policy_break_damage(
+            &source,
+            &target,
+            &critical_skill,
+            Some(&runtime),
+            100,
+            true,
+            10_000,
+        )
+        .unwrap()
+            > policy_break_damage(
+                &source,
+                &target,
+                &critical_skill,
+                Some(&runtime),
+                100,
+                false,
+                10_000,
+            )
+            .unwrap()
+    );
     runtime
         .apply_for_action(
             &proto,
@@ -302,8 +351,59 @@ fn incoming_damage_effects_follow_master_lifetimes_and_break_policy() {
         .unwrap();
     assert_eq!(state_change_summary_value(target, 13), 3_000);
     assert!(
-        policy_break_damage(source, target, &skill, Some(&runtime), 100, 10_000).unwrap() > before
+        policy_break_damage(source, target, &skill, Some(&runtime), 100, false, 10_000).unwrap()
+            > before
     );
+    runtime
+        .apply_for_action(
+            &proto,
+            &mut state,
+            1,
+            0,
+            &[TutorialSkillEffect {
+                id: 76201002,
+                value: 3_000,
+            }],
+            &[1],
+            true,
+            "after",
+            None,
+            10_000,
+            b"test",
+            "incoming-effects",
+            4,
+        )
+        .unwrap();
+    let source = message_list(&state, "members")
+        .into_iter()
+        .find(|member| i32_field(member, "member_id") == Some(1))
+        .unwrap();
+    assert_eq!(state_change_summary_value(&source, 13), -3_000);
+    runtime
+        .apply_for_action(
+            &proto,
+            &mut state,
+            1,
+            0,
+            &[TutorialSkillEffect {
+                id: 91000914,
+                value: 1_500,
+            }],
+            &[2],
+            true,
+            "after",
+            None,
+            10_000,
+            b"test",
+            "incoming-effects",
+            5,
+        )
+        .unwrap();
+    let target = message_list(&state, "members")
+        .into_iter()
+        .find(|member| i32_field(member, "member_id") == Some(2))
+        .unwrap();
+    assert_eq!(state_change_summary_value(&target, 2), 1_500);
 
     let (skill_id, variants) = rules
         .rule_variants_by_skill

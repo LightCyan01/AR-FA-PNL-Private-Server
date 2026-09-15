@@ -51,6 +51,10 @@ fn weak_skill_modifier_applies_only_to_lowest_resistance() {
                 value: 5_000,
             },
         ],
+        limit_count: None,
+        max_lamp: 0,
+        require_command_value: false,
+        skill_destination: None,
         state_change_application_rate: 10_000,
         hp_damage_bonus: None,
     };
@@ -93,6 +97,22 @@ fn weak_skill_modifier_applies_only_to_lowest_resistance() {
     );
     assert_eq!(
         instant_summary(&skill, &abnormal_target, false, 1).unwrap(),
+        0
+    );
+    let abnormal_skill = TutorialSkill {
+        id: 20002360,
+        effects: vec![TutorialSkillEffect {
+            id: 780014001,
+            value: 1_500,
+        }],
+        ..skill
+    };
+    assert_eq!(
+        instant_summary(&abnormal_skill, &abnormal_target, false, 1).unwrap(),
+        1_500
+    );
+    assert_eq!(
+        instant_summary(&abnormal_skill, &negative_target, false, 1).unwrap(),
         0
     );
 }
@@ -394,7 +414,6 @@ fn common_active_modifiers_change_only_their_declared_buckets() {
                     id: 780107003,
                     value: 1_200,
                 },
-
                 TutorialSkillEffect {
                     id: 780123003,
                     value: 3_000,
@@ -495,6 +514,10 @@ fn enemy_defense_down_reaches_hidden_damage_defense() {
         attack_attributes: vec![1],
         skill_target_type: Some(3),
         effects: Vec::new(),
+        limit_count: None,
+        max_lamp: 0,
+        require_command_value: false,
+        skill_destination: None,
         state_change_application_rate: 10_000,
         hp_damage_bonus: None,
     };

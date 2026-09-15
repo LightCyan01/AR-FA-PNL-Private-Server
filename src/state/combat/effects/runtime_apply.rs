@@ -1,8 +1,13 @@
 use super::policy::healing_amount;
-use super::registry::registry;
+use super::registry::{registry, rule_for, Rule};
 use super::runtime::{Instance, Runtime};
-use super::runtime_match::{amount, condition, selected, state_application_blocked};
-use super::runtime_results::{effect_result, status_display, status_effect_result};
+use super::runtime_form::apply_skill_form;
+use super::runtime_lamp::{is_lamp_mechanic, lamp_condition_matches};
+use super::runtime_match::{
+    amount, condition, contextual_recipient, selected, state_application_blocked,
+};
+use super::runtime_results::{display, effect_result, status_display, status_effect_result};
+use super::runtime_targeting::resolved_targets;
 use crate::state::combat::prelude::*;
 use std::collections::BTreeSet;
 
@@ -68,9 +73,75 @@ impl Runtime {
     }
 
     #[allow(clippy::too_many_arguments)]
+    pub(crate) fn apply_for_action_with_rules(
+        &mut self,
+        proto: &ProtoRegistry,
+        rules: &TutorialRules,
+        state: &mut DynamicMessage,
+        source_id: i32,
+        skill_id: i32,
+        effects: &[TutorialSkillEffect],
+        targets: &[i32],
+        is_skill: bool,
+        phase: &str,
+        panel_context: Option<&DynamicMessage>,
+        application_rate: i32,
+        secret: &[u8],
+        start_txid: &str,
+        action_number: i32,
+    ) -> Result<Vec<DynamicMessage>, StateError> {
+        self.apply_inner_with_rules(
+            proto,
+            Some(rules),
+            state,
+            source_id,
+            skill_id,
+            effects,
+            targets,
+            is_skill,
+            phase,
+            panel_context,
+            application_rate,
+            Some((secret, start_txid, action_number)),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn apply_inner(
         &mut self,
         proto: &ProtoRegistry,
+        state: &mut DynamicMessage,
+        source_id: i32,
+        skill_id: i32,
+        effects: &[TutorialSkillEffect],
+        targets: &[i32],
+        is_skill: bool,
+        phase: &str,
+        panel_context: Option<&DynamicMessage>,
+        application_rate: i32,
+        rng: Option<(&[u8], &str, i32)>,
+    ) -> Result<Vec<DynamicMessage>, StateError> {
+        self.apply_inner_with_rules(
+            proto,
+            None,
+            state,
+            source_id,
+            skill_id,
+            effects,
+            targets,
+            is_skill,
+            phase,
+            panel_context,
+            application_rate,
+            rng,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn apply_inner_with_rules(
+        &mut self,
+        proto: &ProtoRegistry,
+        rules: Option<&TutorialRules>,
         state: &mut DynamicMessage,
         source_id: i32,
         skill_id: i32,
@@ -90,8 +161,37 @@ impl Runtime {
             .clone();
         let mut results = Vec::new();
         for (effect_index, effect) in effects.iter().enumerate() {
-            let Some(base_rule) = registry()?.rules.iter().find(|r| r.id == effect.id) else {
-                self.unsupported.insert(effect.id);
+            if rule_for(effect.id, "catalog", "skill", skill_id)?.is_some() {
+                continue;
+            }
+            if is_lamp_mechanic(skill_id, effect.id)? {
+                continue;
+            }
+            let has_nested_rule = registry()?.nested_actions.iter().any(|rule| {
+                rule.owner_type == "skill"
+                    && rule.owner_id == skill_id
+                    && rule.effect_id == effect.id
+            });
+            if phase == "after" && has_nested_rule {
+                let (secret, transaction, action_number) = rng.ok_or(StateError::InvalidRequest)?;
+                results.extend(self.apply_nested_grants(
+                    proto,
+                    &members,
+                    source_id,
+                    skill_id,
+                    effect,
+                    targets,
+                    is_skill,
+                    secret,
+                    transaction,
+                    action_number,
+                    effect_index,
+                )?);
+            }
+            let Some(base_rule) = rule_for(effect.id, "active", "skill", skill_id)? else {
+                if !has_nested_rule {
+                    self.unsupported.insert(effect.id);
+                }
                 continue;
             };
             let mut effective_rule = base_rule.clone();
@@ -135,10 +235,69 @@ impl Runtime {
                 }
             }
             let rule = &effective_rule;
-            if rule.mode != "active" {
+            if rule.phase != phase
+                || !condition(rule, &source)
+                || !lamp_condition_matches(&source, skill_id, rule)?
+            {
                 continue;
             }
-            if rule.phase != phase || !condition(rule, &source) {
+            if rule.operation == "action_reroll" {
+                // No queued choice exists; enemies sample skills at execution.
+                continue;
+            }
+            let requested_targets = targets;
+            let requested_target_broken = members.iter().any(|member| {
+                requested_targets.contains(&member_id(member).unwrap_or_default())
+                    && member_status(member, "enemy")
+                        .ok()
+                        .is_some_and(|enemy| bool_field(&enemy, "is_broken"))
+            });
+            let resolved_targets = resolved_targets(rule, &source, &members, panel_context, targets)?;
+            let targets = resolved_targets.as_slice();
+            if rule.operation == "skill_form" {
+                results.push(apply_skill_form(
+                    proto,
+                    rules.ok_or(StateError::InvalidRequest)?,
+                    &mut members,
+                    source_id,
+                    skill_id,
+                    effect,
+                    is_skill,
+                    rule,
+                )?);
+                continue;
+            }
+            if rule.operation == "field_effect" {
+                let field_effect_id = rule.fixed.ok_or(StateError::InvalidRequest)?;
+                set_battle_field_effect(proto, state, Some(field_effect_id))?;
+                let mut result = effect_result(
+                    proto,
+                    effect.id,
+                    source_id,
+                    source_id,
+                    is_skill,
+                    rule,
+                    effect.value,
+                )?;
+                result.set_field_by_name(
+                    "field_effect_id",
+                    Value::Message(wrapper_i32(proto, field_effect_id)?),
+                );
+                results.push(result);
+                continue;
+            }
+            if rule.operation == "summons" {
+                results.push(apply_summons(
+                    proto,
+                    rules.ok_or(StateError::InvalidRequest)?,
+                    state,
+                    &mut members,
+                    &source,
+                    source_id,
+                    effect,
+                    is_skill,
+                    rule,
+                )?);
                 continue;
             }
             if rule.operation == "panel_convert" {
@@ -182,6 +341,11 @@ impl Runtime {
                                     .panel_from_ids
                                     .contains(&optional_i32_field(panel, "panel_id").unwrap_or(11)))
                             .then(|| i32_field(panel, "turn"))?
+                        })
+                        .take(if rule.panel_limit == 0 {
+                            usize::MAX
+                        } else {
+                            rule.panel_limit
                         })
                         .collect::<BTreeSet<_>>();
                     let mut overwritten = Vec::new();
@@ -254,7 +418,27 @@ impl Runtime {
                 results.push(result);
                 continue;
             }
-            if matches!(rule.operation.as_str(), "cleanse" | "cleanse_abnormal") {
+            if rule.operation == "bomb_gauge" {
+                let maximum = rules
+                    .ok_or(StateError::InvalidRequest)?
+                    .constants
+                    .max_bomb_gauge;
+                let delta = i64::from(maximum).saturating_mul(i64::from(value)) / 10_000;
+                let delta = i32::try_from(delta).map_err(|_| StateError::InvalidRequest)?;
+                let current = i32_field(state, "bomb_gauge").unwrap_or_default().max(0);
+                let next = current.saturating_add(delta).clamp(0, maximum);
+                state.set_field_by_name("bomb_gauge", Value::I32(next));
+                let mut result = effect_result(
+                    proto, effect.id, source_id, source_id, is_skill, rule, value,
+                )?;
+                result.set_field_by_name(
+                    "add_bomb_gauge",
+                    Value::Message(wrapper_i32(proto, next - current)?),
+                );
+                results.push(result);
+                continue;
+            }
+            if rule.operation == "burst_gauge" {
                 for target_index in 0..members.len() {
                     if !bool_field(&members[target_index], "is_alive")
                         || !selected(rule, &source, &members[target_index], targets)
@@ -262,15 +446,146 @@ impl Runtime {
                         continue;
                     }
                     let target_id = member_id(&members[target_index])?;
-                    let removable = if rule.operation == "cleanse" {
-                        &registry()?.removable_negative_state_ids
-                    } else {
-                        &registry()?.removable_abnormal_state_ids
+                    let mut gauge = member_status(&members[target_index], "burst_gauge")?;
+                    let maximum = i32_field(&gauge, "max_gauge")
+                        .ok_or(StateError::InvalidRequest)?
+                        .max(0);
+                    let current = i32_field(&gauge, "current_gauge")
+                        .unwrap_or_default()
+                        .max(0);
+                    let delta = value.saturating_div(100);
+                    let next = current.saturating_add(delta).clamp(0, maximum);
+                    gauge.set_field_by_name("current_gauge", Value::I32(next));
+                    gauge.set_field_by_name(
+                        "is_enable",
+                        Value::Bool(
+                            next >= rules
+                                .ok_or(StateError::InvalidRequest)?
+                                .constants
+                                .burst_gauge_required_for_one_burst_skill,
+                        ),
+                    );
+                    members[target_index].set_field_by_name("burst_gauge", Value::Message(gauge));
+                    let mut result = effect_result(
+                        proto, effect.id, source_id, target_id, is_skill, rule, value,
+                    )?;
+                    result.set_field_by_name(
+                        "add_burst_gauge",
+                        Value::Message(wrapper_i32(proto, next - current)?),
+                    );
+                    results.push(result);
+                }
+                continue;
+            }
+            if rule.operation == "break_gauge" {
+                for target_index in 0..members.len() {
+                    if !bool_field(&members[target_index], "is_alive")
+                        || !selected(rule, &source, &members[target_index], targets)
+                    {
+                        continue;
+                    }
+                    let target_id = member_id(&members[target_index])?;
+                    let Ok(mut enemy) = member_status(&members[target_index], "enemy") else {
+                        continue;
+                    };
+                    let maximum = i32_field(&enemy, "max_break_gauge")
+                        .ok_or(StateError::InvalidRequest)?
+                        .max(0);
+                    let current = i32_field(&enemy, "break_gauge").unwrap_or_default().max(0);
+                    let delta = i64::from(maximum).saturating_mul(i64::from(value)) / 10_000;
+                    let delta = i32::try_from(delta).map_err(|_| StateError::InvalidRequest)?;
+                    let next = current.saturating_add(delta).clamp(0, maximum);
+                    enemy.set_field_by_name("break_gauge", Value::I32(next));
+                    members[target_index].set_field_by_name("enemy", Value::Message(enemy));
+                    let mut result = effect_result(
+                        proto, effect.id, source_id, target_id, is_skill, rule, value,
+                    )?;
+                    result.set_field_by_name(
+                        "break_gauge_heal",
+                        Value::Message(wrapper_i32(proto, next - current)?),
+                    );
+                    results.push(result);
+                }
+                continue;
+            }
+            if rule.operation == "remove_stack" {
+                for target in members.iter().filter(|member| {
+                    bool_field(member, "is_alive") && selected(rule, &source, member, targets)
+                }) {
+                    let target_id = member_id(target)?;
+                    let index = self.instances.iter().position(|instance| {
+                        instance.target == target_id && instance.rule.state_id == rule.state_id
+                    });
+                    let mut result_rule = rule.clone();
+                    result_rule.state_id = 0;
+                    let mut result = effect_result(
+                        proto,
+                        effect.id,
+                        source_id,
+                        target_id,
+                        is_skill,
+                        &result_rule,
+                        effect.value,
+                    )?;
+                    if let Some(index) = index {
+                        let previous = self.instances[index].clone();
+                        let count = effect.value.saturating_div(100).max(1);
+                        let removed = rule.fixed.unwrap_or_default().saturating_mul(count);
+                        if previous.value <= removed {
+                            self.instances.remove(index);
+                            result.set_field_by_name(
+                                "removed_state_changes",
+                                Value::List(vec![Value::Message(display(
+                                    proto,
+                                    rule.state_id,
+                                    previous.value,
+                                    previous.remaining,
+                                )?)]),
+                            );
+                            if !self.instances.iter().any(|instance| {
+                                instance.target == target_id
+                                    && instance.rule.state_id == rule.state_id
+                            }) {
+                                self.managed
+                                    .entry(target_id)
+                                    .or_default()
+                                    .remove(&rule.state_id);
+                            }
+                        } else {
+                            self.instances[index].value = previous.value - removed;
+                        }
+                    }
+                    results.push(result);
+                }
+                continue;
+            }
+            if matches!(
+                rule.operation.as_str(),
+                "cleanse" | "cleanse_abnormal" | "cleanse_positive"
+            ) {
+                let limit = if (100..10_000).contains(&value) {
+                    usize::try_from(value / 100).map_err(|_| StateError::InvalidRequest)?
+                } else {
+                    usize::MAX
+                };
+                for target_index in 0..members.len() {
+                    if !bool_field(&members[target_index], "is_alive")
+                        || !selected(rule, &source, &members[target_index], targets)
+                    {
+                        continue;
+                    }
+                    let target_id = member_id(&members[target_index])?;
+                    let removable = match rule.operation.as_str() {
+                        "cleanse" => &registry()?.removable_negative_state_ids,
+                        "cleanse_abnormal" => &registry()?.removable_abnormal_state_ids,
+                        "cleanse_positive" => &registry()?.removable_positive_state_ids,
+                        _ => unreachable!(),
                     };
                     let mut removed = Vec::new();
                     let mut changes = message_list(&members[target_index], "state_changes");
                     changes.retain(|change| {
-                        if removable
+                        if removed.len() < limit
+                            && removable
                             .contains(&i32_field(change, "state_change_id").unwrap_or_default())
                         {
                             removed.push(Value::Message(change.clone()));
@@ -283,6 +598,14 @@ impl Runtime {
                         "state_changes",
                         Value::List(changes.into_iter().map(Value::Message).collect()),
                     );
+                    if removed.iter().any(|change| {
+                        change
+                            .as_message()
+                            .and_then(|change| i32_field(change, "state_change_id"))
+                            == Some(910059)
+                    }) {
+                        members[target_index].set_field_by_name("is_stun", Value::Bool(false));
+                    }
                     self.instances.retain(|instance| {
                         instance.target != target_id || !removable.contains(&instance.rule.state_id)
                     });
@@ -348,7 +671,7 @@ impl Runtime {
                         message_list(&members[target_index], "state_change_resistances")
                             .into_iter()
                             .find(|row| i32_field(row, "state_change_id") == Some(rule.state_id));
-                    let invalid = state_application_blocked(&members[target_index], rule.state_id)?
+                    let invalid = state_application_blocked(&members[target_index], rule)?
                         || resistance
                             .as_ref()
                             .is_some_and(|row| bool_field(row, "is_invalid"));
@@ -357,8 +680,45 @@ impl Runtime {
                         .and_then(|row| i32_field(row, "value"))
                         .unwrap_or_default()
                         .saturating_mul(100);
+                    let runtime_resistance = if registry()?.abnormal_state_ids.contains(&rule.state_id)
+                    {
+                        let applies = |candidate: &Rule| {
+                            candidate.affected_state_ids.is_empty()
+                                || candidate.affected_state_ids.contains(&rule.state_id)
+                        };
+                        let active = self
+                            .instances
+                            .iter()
+                            .filter(|instance| {
+                                instance.target == target_id
+                                    && instance.rule.operation == "abnormal_resistance"
+                                    && applies(&instance.rule)
+                            })
+                            .fold(0i32, |total, instance| total.saturating_add(instance.value));
+                        self.passives
+                            .iter()
+                            .filter(|passive| {
+                                passive.rule.operation == "abnormal_resistance"
+                                    && applies(&passive.rule)
+                                    && contextual_recipient(
+                                        passive,
+                                        &members[target_index],
+                                    )
+                                    && members.iter().any(|source| {
+                                        i32_field(source, "member_id") == Some(passive.source)
+                                            && bool_field(source, "is_alive")
+                                            && condition(&passive.rule, source)
+                                    })
+                            })
+                            .fold(active, |total, passive| {
+                                total.saturating_add(passive.value)
+                            })
+                    } else {
+                        0
+                    };
                     let chance = application_rate
                         .saturating_sub(resistance_rate)
+                        .saturating_sub(runtime_resistance)
                         .clamp(0, 10_000);
                     let succeeded = !invalid
                         && (chance == 10_000
@@ -401,6 +761,9 @@ impl Runtime {
                             "state_changes",
                             Value::List(changes.into_iter().map(Value::Message).collect()),
                         );
+                        if rule.state_id == 910059 {
+                            members[target_index].set_field_by_name("is_stun", Value::Bool(true));
+                        }
                     }
                     results.push(status_effect_result(
                         proto, effect.id, source_id, target_id, is_skill, rule, value, outcome,
@@ -412,17 +775,22 @@ impl Runtime {
                 bool_field(m, "is_alive")
                     && selected(rule, &source, m, targets)
                     && (!rule.target_broken
-                        || member_status(m, "enemy")
-                            .ok()
-                            .is_some_and(|enemy| bool_field(&enemy, "is_broken")))
+                        || if requested_targets.contains(&member_id(m).unwrap_or_default()) {
+                            member_status(m, "enemy")
+                                .ok()
+                                .is_some_and(|enemy| bool_field(&enemy, "is_broken"))
+                        } else {
+                            requested_target_broken
+                        })
             }) {
                 let target_id = member_id(target)?;
-                if state_application_blocked(target, rule.state_id)? {
+                if state_application_blocked(target, rule)? {
                     results.push(status_effect_result(
                         proto, effect.id, source_id, target_id, is_skill, rule, value, 4,
                     )?);
                     continue;
                 }
+                let value = self.apply_negative_potency(target_id, rule, value)?;
                 let value = if rule.stack_cap > 0 {
                     self.instances
                         .iter()
@@ -467,4 +835,130 @@ impl Runtime {
         self.refresh(proto, state)?;
         Ok(results)
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_summons(
+    proto: &ProtoRegistry,
+    rules: &TutorialRules,
+    state: &mut DynamicMessage,
+    members: &mut Vec<DynamicMessage>,
+    source: &DynamicMessage,
+    source_id: i32,
+    effect: &TutorialSkillEffect,
+    is_skill: bool,
+    rule: &Rule,
+) -> Result<DynamicMessage, StateError> {
+    let source_type = member_type(source)?;
+    let source_side_count = i32::try_from(
+        members
+            .iter()
+            .filter(|member| {
+                bool_field(member, "is_alive") && member_type(member).ok() == Some(source_type)
+            })
+            .count(),
+    )
+    .map_err(|_| StateError::InvalidRequest)?;
+    let allowed = source_side_count >= rule.source_side_count_min
+        && (rule.source_side_count_max == 0 || source_side_count <= rule.source_side_count_max);
+    let summons_effect_id = rule.fixed.ok_or(StateError::InvalidRequest)?;
+    let summons_rule = rules
+        .summons_effects
+        .iter()
+        .find(|summons| summons.id == summons_effect_id)
+        .ok_or_else(|| {
+            StateError::TutorialRules(format!("missing summons effect {summons_effect_id}"))
+        })?;
+    let free_member_ids = (11..=10 + rules.constants.max_enemy_member_count)
+        .filter(|member_id| {
+            !members.iter().any(|member| {
+                i32_field(member, "member_id") == Some(*member_id) && bool_field(member, "is_alive")
+            })
+        })
+        .take(summons_rule.enemies.len())
+        .collect::<Vec<_>>();
+    let succeeded = allowed && free_member_ids.len() == summons_rule.enemies.len();
+    let mut summons = empty_message(proto, "blend.model.BattleEffectSummons")?;
+    summons.set_field_by_name("is_success", Value::Bool(succeeded));
+    if succeeded {
+        let battle_id = i32_field(state, "battle_id").ok_or(StateError::InvalidRequest)?;
+        let wave_number = i32_field(state, "wave").unwrap_or(1).max(1);
+        let wave_id = *rule_battle(rules, battle_id)?
+            .wave_ids
+            .get(usize::try_from(wave_number - 1).map_err(|_| StateError::InvalidRequest)?)
+            .ok_or(StateError::InvalidRequest)?;
+        let mut base_numbers = message_list(state, "base_enemy_numbers")
+            .into_iter()
+            .map(|row| {
+                Ok((
+                    i32_field(&row, "base_enemy_id").ok_or(StateError::InvalidRequest)?,
+                    message_i32_field(&row, "current_number", "value")
+                        .ok_or(StateError::InvalidRequest)?,
+                ))
+            })
+            .collect::<Result<Vec<_>, StateError>>()?;
+        let mut units = message_list(state, "timeline_units");
+        let mut result_members = Vec::new();
+        for (index, (wave_enemy, member_id)) in
+            summons_rule.enemies.iter().zip(free_member_ids).enumerate()
+        {
+            members.retain(|member| i32_field(member, "member_id") != Some(member_id));
+            units.retain(|unit| i32_field(unit, "member_id") != Some(member_id));
+            let enemy = rule_enemy(rules, wave_enemy.id)?;
+            let number = if let Some((_, count)) = base_numbers
+                .iter_mut()
+                .find(|(base_id, _)| *base_id == enemy.base_enemy_id)
+            {
+                *count = count.saturating_add(1);
+                *count
+            } else {
+                base_numbers.push((enemy.base_enemy_id, 1));
+                1
+            };
+            let member = build_enemy_member(proto, rules, wave_enemy, wave_id, member_id, number)?;
+            let wait = base_wait(
+                i32_field(&member_status(&member, "current_status")?, "speed").unwrap_or(1),
+            )
+            .max(1);
+            let slots = if enemy.is_boss || enemy.status_growth.values().any(|value| *value != 0) {
+                3
+            } else {
+                2
+            };
+            for timeline_number in 1..=slots {
+                units.push(build_timeline_unit(
+                    proto,
+                    member_id,
+                    timeline_number,
+                    wait.saturating_mul(timeline_number),
+                )?);
+            }
+            members.push(member);
+            let mut result_member = empty_message(proto, "blend.model.BattleEffectSummonsMember")?;
+            result_member.set_field_by_name("member_id", Value::I32(member_id));
+            result_member.set_field_by_name(
+                "enemies_index",
+                Value::I32(i32::try_from(index).map_err(|_| StateError::InvalidRequest)?),
+            );
+            result_members.push(Value::Message(result_member));
+        }
+        sort_timeline_units(&mut units, members);
+        state.set_field_by_name(
+            "timeline_units",
+            Value::List(units.into_iter().map(Value::Message).collect()),
+        );
+        set_base_enemy_numbers(proto, state, &base_numbers)?;
+        summons.set_field_by_name("members", Value::List(result_members));
+    }
+    let mut result = effect_result(
+        proto,
+        effect.id,
+        source_id,
+        source_id,
+        is_skill,
+        rule,
+        effect.value,
+    )?;
+    result.set_field_by_name("summons", Value::Message(summons));
+    Ok(result)
 }

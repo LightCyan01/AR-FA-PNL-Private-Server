@@ -93,10 +93,10 @@ impl State {
             return Err(StateError::InvalidRequest);
         }
         let party_number = i32_field(request, "party_number").unwrap_or_default();
+        let ship_id = optional_i32_field(request, "ship_id");
         // ponytail: accept client weakening selections; add scaling when its formula is proven.
         if !(1..=20).contains(&party_number)
             || i32_field(request, "enemy_weak_level").unwrap_or_default() < 0
-            || request.has_field_by_name("ship_id")
         {
             return Err(StateError::InvalidRequest);
         }
@@ -140,6 +140,7 @@ impl State {
                     resources.clone(),
                     quest_id,
                     party_number,
+                    ship_id,
                     None,
                     BattleStartMode::Standard,
                     now,
@@ -295,6 +296,7 @@ impl State {
                     resources.clone(),
                     quest,
                     1,
+                    None,
                     None,
                     mode,
                     now,

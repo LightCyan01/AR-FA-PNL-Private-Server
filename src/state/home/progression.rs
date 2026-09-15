@@ -742,9 +742,8 @@ fn advance_mission_event(
             continue;
         };
         let current = total_task_count(resources, task_delta.condition_id);
-        let already_changed = message_iter(changed, "total_task_counts").any(|row| {
-            i32_field(row, "condition_id") == Some(task_delta.condition_id)
-        });
+        let already_changed = message_iter(changed, "total_task_counts")
+            .any(|row| i32_field(row, "condition_id") == Some(task_delta.condition_id));
         let next = state_counter_total(&task.objective, &item_totals, &quest_totals)
             .filter(|target| already_changed || *target > current)
             .map(|target| current.max(target))

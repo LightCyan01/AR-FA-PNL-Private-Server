@@ -43,6 +43,11 @@ pub(crate) struct AtelierConstants {
     pub(crate) memoria_exp_return_rate: i32,
     pub(crate) tool_conversion_limit_count: i32,
     pub(crate) party_count_per_content: i32,
+    pub(crate) base_coef_for_main_memoria: i32,
+    pub(crate) max_coef_per_one_memoria: i32,
+    pub(crate) main_memoria_multi_discount_coef: Vec<i32>,
+    pub(crate) memoria_match_bonus_coef: Vec<i32>,
+    pub(crate) sub_memoria_limit_break_bonus_coef: Vec<i32>,
     pub(crate) research_task_condition_ids: BTreeMap<i32, i32>,
 }
 
@@ -117,7 +122,10 @@ pub(crate) struct MemoriaRule {
     pub(crate) id: i32,
     pub(crate) rarity: i32,
     pub(crate) item_limit_break_enabled: bool,
+    pub(crate) attack_attributes: Vec<i32>,
+    pub(crate) roles: Vec<i32>,
     pub(crate) status_buffs: Vec<MemoriaStatusBuff>,
+    pub(crate) ability_ids: Vec<i32>,
     pub(crate) rank_ability_effects: Vec<Vec<AbilityEffect>>,
 }
 
@@ -220,8 +228,11 @@ pub(crate) struct ShipPartRule {
 
 #[derive(Clone, Deserialize)]
 pub(crate) struct ShipLevelRule {
+    pub(crate) level: i32,
     pub(crate) exp: i32,
     pub(crate) rank: i32,
+    pub(crate) ability_ids: Vec<i32>,
+    pub(crate) support_ability_apply_rate: i32,
     pub(crate) max_character_count: i32,
     pub(crate) max_sub_memoria_count: i32,
     pub(crate) max_tool_count: i32,
@@ -229,6 +240,7 @@ pub(crate) struct ShipLevelRule {
 
 #[derive(Clone, Deserialize)]
 pub(crate) struct ShipToolLevelRule {
+    pub(crate) level: i32,
     pub(crate) exp: i32,
     pub(crate) rank: i32,
 }
@@ -330,7 +342,7 @@ pub(crate) fn combat_stats(
     member: &DynamicMessage,
     role: i32,
     mut stats: BattleStats,
-) -> Result<(BattleStats, Vec<TutorialSkillEffect>), StateError> {
+) -> Result<(BattleStats, Vec<BattlePassiveEffect>), StateError> {
     let mut rates = BattleStats {
         hp: 0,
         speed: 0,
@@ -426,9 +438,12 @@ pub(crate) fn combat_stats(
                     .map_err(|_| StateError::InvalidRequest)?,
             )?;
         }
-        passives.extend(tool.ability_effects.iter().map(|e| TutorialSkillEffect {
-            id: e.id,
-            value: e.value,
+        passives.extend(tool.ability_effects.iter().map(|e| BattlePassiveEffect {
+            ability_id: 0,
+            effect: TutorialSkillEffect {
+                id: e.id,
+                value: e.value,
+            },
         }));
         for trait_params in message_list(&entity, "traits") {
             let trait_rule = rules
@@ -441,9 +456,12 @@ pub(crate) fn combat_stats(
                 .rank_ability_effects
                 .get(usize::try_from(rank - 1).map_err(|_| StateError::InvalidRequest)?)
                 .ok_or(StateError::InvalidRequest)?;
-            passives.extend(effects.iter().map(|e| TutorialSkillEffect {
-                id: e.id,
-                value: e.value,
+            passives.extend(effects.iter().map(|e| BattlePassiveEffect {
+                ability_id: 0,
+                effect: TutorialSkillEffect {
+                    id: e.id,
+                    value: e.value,
+                },
             }));
         }
     }
@@ -485,9 +503,12 @@ pub(crate) fn combat_stats(
             add_stat(&mut rates, buff.status_type, initial + growth)?;
         }
         if let Some(effects) = memoria.rank_ability_effects.get(limit_break) {
-            passives.extend(effects.iter().map(|e| TutorialSkillEffect {
-                id: e.id,
-                value: e.value,
+            passives.extend(effects.iter().map(|e| BattlePassiveEffect {
+                ability_id: 0,
+                effect: TutorialSkillEffect {
+                    id: e.id,
+                    value: e.value,
+                },
             }));
         }
     }

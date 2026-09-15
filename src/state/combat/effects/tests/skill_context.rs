@@ -72,10 +72,12 @@ fn observed_master_damage_passives_apply_once() {
     )
     .unwrap();
     apply_leader_passives(&rules, &mut party).unwrap();
-    assert!(party.iter().all(|member| member
-        .leader_passives
+    assert!(party
         .iter()
-        .any(|effect| effect.id == 72500125 && effect.value == 5000)));
+        .all(|member| member
+            .leader_passives
+            .iter()
+            .any(|passive| passive.effect.id == 72500125 && passive.effect.value == 5000)));
 
     let member = |character_id, is_leader| BattlePartyMember {
         character_id,
@@ -87,6 +89,7 @@ fn observed_master_damage_passives_apply_once() {
         integrated_stats: None,
         damage_bonus: 0,
         skills: Vec::new(),
+        ability_ids: Vec::new(),
         passives: Vec::new(),
         leader_passives: Vec::new(),
     };
@@ -97,7 +100,7 @@ fn observed_master_damage_passives_apply_once() {
         .all(|member| [72500160, 72500161].into_iter().all(|id| member
             .leader_passives
             .iter()
-            .any(|effect| effect.id == id && effect.value == 2000))));
+            .any(|passive| passive.effect.id == id && passive.effect.value == 2000))));
 
     let start = reduce_battle_start(&proto, &rules, resources, 101001002, 1).unwrap();
     assert!(message_list(&start.state, "members")
@@ -119,6 +122,7 @@ fn observed_master_damage_passives_apply_once() {
         (72000907, "allies", "attack", 0),
         (72000908, "allies", "magic", 0),
         (72000909, "allies", "defense", 0),
+        (72000914, "self", "target_rate", 0),
         (72000946, "allies", "summary", 7),
     ] {
         let rule = registry()
@@ -172,6 +176,43 @@ fn observed_master_damage_passives_apply_once() {
             && i32_field(change, "rest_count") == Some(2)
     }));
     assert_eq!(incoming_multiplier_with_runtime(&leader, 1, None), 7000);
+
+    let mut targeting_state = start.state.clone();
+    let first_member = message_list(&targeting_state, "members")
+        .into_iter()
+        .find(|member| member_type(member).ok() == Some(0))
+        .unwrap();
+    let first = member_id(&first_member).unwrap();
+    let boosted = first + 1;
+    let mut boosted_member = first_member.clone();
+    boosted_member.set_field_by_name("member_id", Value::I32(boosted));
+    targeting_state.set_field_by_name(
+        "members",
+        Value::List(vec![Value::Message(first_member), Value::Message(boosted_member)]),
+    );
+    let mut targeting = Runtime::default();
+    targeting.passives.push(Passive {
+        source: boosted,
+        value: 10_000,
+        rule: rule_for(72000914, "passive", "ability", 1990550)
+            .unwrap()
+            .unwrap()
+            .clone(),
+        source_character_id: 0,
+        source_type: 0,
+    });
+    assert_eq!(
+        targeting.target_by_rate(&targeting_state, 9_999).unwrap(),
+        first
+    );
+    assert_eq!(
+        targeting.target_by_rate(&targeting_state, 10_000).unwrap(),
+        boosted
+    );
+    assert_eq!(
+        targeting.target_by_rate(&targeting_state, 29_999).unwrap(),
+        boosted
+    );
 }
 
 #[test]
@@ -301,6 +342,22 @@ fn conditional_memoria_and_equipment_follow_attack_context() {
         450
     );
     assert_eq!(contextual.contextual_summary(&actor(), &burst, false, 7), 0);
+    add_passive(&mut contextual, 120000114, 3_000, 0);
+    let mut enemy = message_list(&clean_state, "members")
+        .into_iter()
+        .find(|member| i32_field(member, "member_id") == Some(enemy_id))
+        .unwrap();
+    assert_eq!(
+        contextual.contextual_summary_against(&actor(), Some(&enemy), &physical, false, 4),
+        0
+    );
+    let mut enemy_status = member_status(&enemy, "enemy").unwrap();
+    enemy_status.set_field_by_name("is_broken", Value::Bool(true));
+    enemy.set_field_by_name("enemy", Value::Message(enemy_status));
+    assert_eq!(
+        contextual.contextual_summary_against(&actor(), Some(&enemy), &physical, false, 4),
+        3_000
+    );
 
     let mut static_state = clean_state.clone();
     let mut static_runtime = base_runtime();
@@ -339,8 +396,8 @@ fn conditional_memoria_and_equipment_follow_attack_context() {
         trigger_runtime
             .trigger_attack_after(
                 &proto,
+                &rules,
                 &mut trigger_state,
-
                 actor_id,
                 &physical,
                 &[hit.clone()],
@@ -428,7 +485,14 @@ fn conditional_memoria_and_equipment_follow_attack_context() {
     )
     .unwrap();
     wind_runtime
-        .trigger_attack_after(&proto, &mut wind_state, actor_id, &wind, &[wind_hit])
+        .trigger_attack_after(
+            &proto,
+            &rules,
+            &mut wind_state,
+            actor_id,
+            &wind,
+            &[wind_hit],
+        )
         .unwrap();
     let wind_enemy = message_list(&wind_state, "members")
         .into_iter()
