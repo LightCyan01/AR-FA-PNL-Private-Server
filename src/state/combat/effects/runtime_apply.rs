@@ -236,6 +236,10 @@ impl Runtime {
             {
                 continue;
             }
+            if rule.operation == "action_reroll" {
+                // No queued choice exists; enemies sample skills at execution.
+                continue;
+            }
             let resolved_targets = resolved_targets(rule, &source, &members, panel_context, targets)?;
             let targets = resolved_targets.as_slice();
             if rule.operation == "skill_form" {

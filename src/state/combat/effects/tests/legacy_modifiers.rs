@@ -269,4 +269,24 @@ fn legacy_skill_modifiers_are_active_and_apply_to_their_real_recipients() {
         i32_field(&source, "hp"),
         Some(starting_hp + maximum_hp * 1_500 / 10_000)
     );
+
+    let instances = runtime.instances.len();
+    assert!(runtime
+        .apply(
+            &proto,
+            &mut state,
+            source_id,
+            &[TutorialSkillEffect {
+                id: 81148004,
+                value: 0,
+            }],
+            &[source_id],
+            true,
+            "after",
+            None,
+        )
+        .unwrap()
+        .is_empty());
+    assert_eq!(runtime.instances.len(), instances);
+    assert!(!runtime.unsupported.contains(&81148004));
 }
