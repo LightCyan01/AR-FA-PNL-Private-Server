@@ -122,6 +122,7 @@ fn observed_master_damage_passives_apply_once() {
         (72000907, "allies", "attack", 0),
         (72000908, "allies", "magic", 0),
         (72000909, "allies", "defense", 0),
+        (72000914, "self", "target_rate", 0),
         (72000946, "allies", "summary", 7),
     ] {
         let rule = registry()
@@ -175,6 +176,43 @@ fn observed_master_damage_passives_apply_once() {
             && i32_field(change, "rest_count") == Some(2)
     }));
     assert_eq!(incoming_multiplier_with_runtime(&leader, 1, None), 7000);
+
+    let mut targeting_state = start.state.clone();
+    let first_member = message_list(&targeting_state, "members")
+        .into_iter()
+        .find(|member| member_type(member).ok() == Some(0))
+        .unwrap();
+    let first = member_id(&first_member).unwrap();
+    let boosted = first + 1;
+    let mut boosted_member = first_member.clone();
+    boosted_member.set_field_by_name("member_id", Value::I32(boosted));
+    targeting_state.set_field_by_name(
+        "members",
+        Value::List(vec![Value::Message(first_member), Value::Message(boosted_member)]),
+    );
+    let mut targeting = Runtime::default();
+    targeting.passives.push(Passive {
+        source: boosted,
+        value: 10_000,
+        rule: rule_for(72000914, "passive", "ability", 1990550)
+            .unwrap()
+            .unwrap()
+            .clone(),
+        source_character_id: 0,
+        source_type: 0,
+    });
+    assert_eq!(
+        targeting.target_by_rate(&targeting_state, 9_999).unwrap(),
+        first
+    );
+    assert_eq!(
+        targeting.target_by_rate(&targeting_state, 10_000).unwrap(),
+        boosted
+    );
+    assert_eq!(
+        targeting.target_by_rate(&targeting_state, 29_999).unwrap(),
+        boosted
+    );
 }
 
 #[test]

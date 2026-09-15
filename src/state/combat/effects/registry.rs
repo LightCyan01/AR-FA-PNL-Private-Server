@@ -311,6 +311,7 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                         | "skill_damage_scale"
                         | "scaling_metadata"
                         | "action_reroll"
+                        | "target_rate"
                         | "cover"
                         | "timeline_shift"
                         | "healing"

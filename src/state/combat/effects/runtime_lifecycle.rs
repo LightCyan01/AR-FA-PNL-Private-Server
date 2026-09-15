@@ -318,7 +318,7 @@ impl Runtime {
                     | "regeneration" | "negative_immunity" | "abnormal_immunity"
                     | "positive_immunity" | "negative_potency" | "damage_immunity" | "cover"
                     | "cleanse_positive"
-                    | "evasion" | "abnormal_resistance" => (), // read by combat policy
+                    | "evasion" | "abnormal_resistance" | "target_rate" => (), // read by combat policy
                     _ => return Err(StateError::InvalidRequest),
                 }
                 Ok(())

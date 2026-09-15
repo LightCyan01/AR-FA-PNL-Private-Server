@@ -1550,9 +1550,21 @@ pub(crate) fn reduce_battle_attack_with_effects(
             } else if matches!(enemy_skill.skill_target_type, Some(2 | 4)) {
                 member_id(&most_injured_living_member(&state, 1)?)?
             } else if enemy_skill.skill_target_type == Some(3) {
-                effect_runtime
-                    .provocation_target(actor_id)
-                    .unwrap_or(member_id(&earliest_living_member(&state, Some(0))?)?)
+                if let Some(target) = effect_runtime.provocation_target(actor_id) {
+                    target
+                } else {
+                    effect_runtime.target_by_rate(
+                        &state,
+                        deterministic_roll(
+                            secret,
+                            start_txid,
+                            action_number,
+                            b"enemy-target",
+                            actor_id,
+                            0,
+                        ),
+                    )?
+                }
             } else {
                 member_id(&earliest_living_member(&state, Some(0))?)?
             };
