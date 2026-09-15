@@ -87,6 +87,7 @@ fn legacy_skill_modifiers_are_active_and_apply_to_their_real_recipients() {
             Expiry::Turn,
             2,
         ),
+        (780046018, "speed", "allies", 0, 1, 510216, Expiry::Turn, 3),
         (
             780107007,
             "magic",
