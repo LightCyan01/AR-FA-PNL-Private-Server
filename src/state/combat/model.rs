@@ -965,10 +965,14 @@ pub(crate) fn character_passives(
             .iter()
             .find(|a| a.id == id)
             .ok_or(StateError::InvalidRequest)?;
+        let burst_capacity = ability
+            .burst_gauge_max
+            .and_then(|maximum| maximum.checked_mul(100));
         effects.extend(
             ability
                 .effects
                 .iter()
+                .filter(|effect| Some(effect.value) != burst_capacity)
                 .cloned()
                 .map(|effect| BattlePassiveEffect {
                     ability_id: id,

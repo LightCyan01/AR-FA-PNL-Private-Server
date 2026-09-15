@@ -113,6 +113,17 @@ fn stored_burst_gauge_pays_for_the_conditional_additional_attack() {
     let mut ally = ally_member(&proto, &rules, 45602, vec![1990535, 1990536]);
     let mut gauge = member_status(&ally, "burst_gauge").unwrap();
     assert_eq!(i32_field(&gauge, "max_gauge"), Some(300));
+    let capacity = rules
+        .abilities
+        .iter()
+        .find(|ability| ability.id == 1990535)
+        .unwrap()
+        .burst_gauge_max
+        .unwrap();
+    assert!(!character_passives(&rules, 45602, None, 3)
+        .unwrap()
+        .iter()
+        .any(|passive| passive.effect.value == capacity * 100));
     gauge.set_field_by_name("current_gauge", Value::I32(200));
     ally.set_field_by_name("burst_gauge", Value::Message(gauge));
     let enemy = enemy_member(&proto, &rules, 11);

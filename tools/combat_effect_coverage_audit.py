@@ -18,6 +18,7 @@ WORKSPACE = REPO.parent
 sys.path.insert(0, str(WORKSPACE / "tools" / "build"))
 
 from build_fresh_state_rules import decode_master, load_probe  # noqa: E402
+from build_gameplay_rules import burst_gauge_max  # noqa: E402
 
 
 class AuditError(Exception):
@@ -177,13 +178,30 @@ def audit(master: dict, rules: dict, source_hash: str) -> tuple[list[tuple[str, 
         for ability_id, rule in rules.get("lamp_abilities", {}).items()
         for effect_id in rule["mechanic_effect_ids"]
     )
+    catalog_mechanics = set()
+    for ability in master["ability"]:
+        maximum = burst_gauge_max(ability)
+        if maximum is None:
+            continue
+        effect_ids = [
+            int(effect["id"])
+            for effect in ability["effects"]
+            if int(effect["value"]) == maximum * 100
+        ]
+        require(len(effect_ids) == 1, f"ambiguous burst capacity ability {ability['id']}")
+        catalog_mechanics.add(("ability", int(ability["id"]), effect_ids[0]))
     missing = []
     for occurrence in occurrences(master):
         owner_type, owner_id, effect_id = occurrence
         modes = runtime_modes.get(effect_id, set()) | owner_modes.get(occurrence, set())
         expected = {"passive"} if owner_type == "ability" else {"active", "instant"}
         executable = bool(modes & expected)
-        if not executable and occurrence not in nested and occurrence not in lamp_mechanics:
+        if (
+            not executable
+            and occurrence not in nested
+            and occurrence not in lamp_mechanics
+            and occurrence not in catalog_mechanics
+        ):
             missing.append(occurrence)
     return missing, Counter(owner_type for owner_type, _, _ in missing)
 
