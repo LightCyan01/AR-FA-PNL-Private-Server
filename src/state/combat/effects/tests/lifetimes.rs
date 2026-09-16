@@ -4,6 +4,38 @@ use prost::Message;
 use std::path::Path;
 
 #[test]
+fn compound_evasion_skills_bind_only_the_evasion_effect() {
+    for (effect_id, skill_id, target) in [
+        (91001209, 12002705, "self"),
+        (91001674, 14002500, "allies"),
+    ] {
+        let rule = rule_for(effect_id, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                rule.operation.as_str(),
+                rule.target.as_str(),
+                &rule.expiry,
+                rule.duration,
+            ),
+            ("evasion", target, &Expiry::Attacked, 1)
+        );
+    }
+    for (effect_id, skill_id) in [
+        (91001671, 12002705),
+        (91001694, 12002705),
+        (91001699, 12002705),
+        (91001700, 12002705),
+        (91001701, 14002500),
+    ] {
+        if let Some(rule) = rule_for(effect_id, "active", "skill", skill_id).unwrap() {
+            assert_ne!(rule.operation, "evasion");
+        }
+    }
+}
+
+#[test]
 fn combat_effects_persist_expire_and_preserve_conditional_passives() {
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
