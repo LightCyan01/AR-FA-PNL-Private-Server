@@ -80,7 +80,7 @@ pub(crate) fn apply_attack_results(
     let mut total_damage = 0i64;
     let mut killed_ids = Vec::new();
     let is_tool = tools.is_some();
-    let break_panel = battle_panel_break_multiplier(state);
+    let break_panel = runtime.panel_break_multiplier(state)?;
     let guaranteed_critical = battle_panel_guarantees_critical(state);
     let opponent_count = i32::try_from(
         members
@@ -480,6 +480,7 @@ fn resolve_skill_action(
     panel: (i128, i128),
     tools: Option<&[BattlePartyTool]>,
     consume_turn: bool,
+    consume_panel: bool,
     allow_nested: bool,
     secret: &[u8],
     transaction: &str,
@@ -598,6 +599,9 @@ fn resolve_skill_action(
         !cancelled && tools.is_none() && effective_skill.skill_effect_type == 1,
         &effective_skill.attack_attributes,
     );
+    if consume_panel {
+        runtime.consume_panel_potency(&panel_context, actor_id)?;
+    }
     let mut effect_results = Vec::new();
     let mut pending_actions = special_counter.into_iter().collect::<Vec<_>>();
     if !cancelled {
@@ -728,8 +732,9 @@ fn append_nested_actions(
             resources,
             runtime,
             &targets,
-            battle_panel_multiplier(state),
+            runtime.panel_multiplier(state)?,
             None,
+            false,
             false,
             false,
             secret,
@@ -1172,7 +1177,9 @@ pub(crate) fn reduce_battle_attack_with_effects(
             let action_mode = action.mode;
             let command_value = action.command_value;
             let action_targets = select_target_ids(&state, actor_id, actor_type, target_id, skill)?;
-            let panel = battle_panel_multiplier(&state);
+            let panel = effect_runtime.panel_multiplier(&state)?;
+            let consumes_panel = action_mode != 7
+                && (mode != 1 || action_index + 1 == action_count);
             if matches!(action_mode, 1 | 8) {
                 let mut tools = message_list(&state, "battle_tools");
                 for number in &action.battle_tool_numbers {
@@ -1221,13 +1228,14 @@ pub(crate) fn reduce_battle_attack_with_effects(
                 panel,
                 policy_tools,
                 action_mode == 0,
+                consumes_panel,
                 policy_tools.is_none(),
                 secret,
                 start_txid,
                 action_number,
             )?;
             // A multi-tool command emits one action per tool but consumes one panel.
-            if action_mode != 7 && (mode != 1 || action_index + 1 == action_count) {
+            if consumes_panel {
                 consume_timeline_panel(proto, rules, &mut state)?;
                 effect_runtime.acquire_current_panel(&mut state)?;
             }
@@ -1455,6 +1463,7 @@ pub(crate) fn reduce_battle_attack_with_effects(
                 );
             }
             if disabled || killed {
+                effect_runtime.consume_panel_potency(&state, actor_id)?;
                 consume_timeline_panel(proto, rules, &mut state)?;
                 effect_runtime.expire(actor_id, &[], true, false);
                 effect_runtime.acquire_current_panel(&mut state)?;
@@ -1569,7 +1578,7 @@ pub(crate) fn reduce_battle_attack_with_effects(
                 member_id(&earliest_living_member(&state, Some(0))?)?
             };
             let enemy_targets = select_target_ids(&state, actor_id, 1, target_id, enemy_skill)?;
-            let panel = battle_panel_multiplier(&state);
+            let panel = effect_runtime.panel_multiplier(&state)?;
             let resolved = resolve_skill_action(
                 proto,
                 rules,
@@ -1583,6 +1592,7 @@ pub(crate) fn reduce_battle_attack_with_effects(
                 &enemy_targets,
                 panel,
                 None,
+                true,
                 true,
                 true,
                 secret,

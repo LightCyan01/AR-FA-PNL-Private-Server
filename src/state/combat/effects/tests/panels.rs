@@ -149,6 +149,123 @@ fn offensive_panel_policy_matches_master_data() {
 }
 
 #[test]
+fn enhancement_panel_potency_scales_two_panel_uses_without_stacking() {
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let rules = load_gameplay_rules().unwrap();
+    let fresh = load_fresh_rules().unwrap();
+    let resources = reduce_talk_event(
+        &proto,
+        &fresh,
+        &rules,
+        starter_resources(&proto, &fresh).unwrap(),
+        101001001,
+        1,
+    )
+    .unwrap()
+    .resources;
+    let start = reduce_battle_start(&proto, &rules, resources, 101001002, 1).unwrap();
+    let mut state = start.state;
+    let actor_id = member_id(&current_actor(&state).unwrap()).unwrap();
+    let mut runtime = start.effects;
+    runtime.passives.clear();
+    runtime.instances.clear();
+    runtime.managed.clear();
+
+    for value in [2_000, 2_500] {
+        runtime
+            .apply(
+                &proto,
+                &mut state,
+                actor_id,
+                &[TutorialSkillEffect {
+                    id: 71143004,
+                    value,
+                }],
+                &[actor_id],
+                true,
+                "after",
+                None,
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        runtime
+            .instances
+            .iter()
+            .filter(|instance| { instance.rule.operation == "panel_potency" })
+            .count(),
+        1
+    );
+
+    set_timeline_panels(&proto, &mut state, &[12], 1, 101).unwrap();
+    assert_eq!(runtime.panel_multiplier(&state).unwrap(), (150, 100));
+    runtime.consume_panel_potency(&state, actor_id).unwrap();
+    assert_eq!(
+        runtime
+            .instances
+            .iter()
+            .find(|instance| { instance.rule.operation == "panel_potency" })
+            .map(|instance| instance.remaining),
+        Some(1)
+    );
+
+    set_timeline_panels(&proto, &mut state, &[22], 1, 102).unwrap();
+    assert_eq!(runtime.panel_multiplier(&state).unwrap(), (150, 100));
+    assert_eq!(runtime.panel_break_multiplier(&state).unwrap(), 150);
+    runtime.consume_panel_potency(&state, actor_id).unwrap();
+    assert!(!runtime
+        .instances
+        .iter()
+        .any(|instance| { instance.rule.operation == "panel_potency" }));
+    assert_eq!(runtime.panel_multiplier(&state).unwrap(), (140, 100));
+
+    runtime
+        .apply(
+            &proto,
+            &mut state,
+            actor_id,
+            &[TutorialSkillEffect {
+                id: 71143004,
+                value: 2_500,
+            }],
+            &[actor_id],
+            true,
+            "after",
+            None,
+        )
+        .unwrap();
+    set_timeline_panels(&proto, &mut state, &[33], 1, 103).unwrap();
+    runtime.acquire_current_panel(&mut state).unwrap();
+    assert_eq!(runtime.panel_damage_taken.get(&actor_id), Some(&-5_000));
+
+    let mut members = message_list(&state, "members");
+    let actor = members
+        .iter_mut()
+        .find(|member| member_id(member).ok() == Some(actor_id))
+        .unwrap();
+    let max_hp = i32_field(actor, "max_hp").unwrap();
+    actor.set_field_by_name("hp", Value::I32(1));
+    state.set_field_by_name(
+        "members",
+        Value::List(members.into_iter().map(Value::Message).collect()),
+    );
+    set_timeline_panels(&proto, &mut state, &[42], 1, 104).unwrap();
+    runtime.acquire_current_panel(&mut state).unwrap();
+    let actor = message_list(&state, "members")
+        .into_iter()
+        .find(|member| member_id(member).ok() == Some(actor_id))
+        .unwrap();
+    assert_eq!(
+        i32_field(&actor, "hp"),
+        Some((1 + max_hp * 3_125 / 10_000).min(max_hp))
+    );
+}
+
+#[test]
 fn acquisition_panels_apply_once_and_expire_on_hit() {
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),

@@ -2,6 +2,7 @@ use super::registry::Expiry;
 use super::runtime::{Instance, Runtime};
 use super::runtime_lamp::heal_all;
 use super::runtime_match::{condition, context_matches, selected_for_source_character};
+use super::runtime_panel::scale_panel_value;
 use super::runtime_results::{effect_result, turn_state_change_result};
 use crate::state::combat::prelude::*;
 use std::collections::BTreeSet;
@@ -238,6 +239,7 @@ impl Runtime {
         self.acquired_panel_wave = wave;
         self.acquired_panel_turn = turn;
         let actor_id = member_id(&current_actor(state)?)?;
+        let panel_rate = self.panel_effect_rate(state)?;
         self.trigger_panel_lamps(state, actor_id)?;
         let actor_type = member_type(&current_actor(state)?)?;
         let panel_id = effective_battle_panel_id(state);
@@ -247,7 +249,11 @@ impl Runtime {
         }) {
             let id = member_id(member)?;
             if matches!(panel_id, 33 | 36) {
-                let delta = if panel_id == 33 { -4_000 } else { 4_000 };
+                let delta = if panel_id == 33 {
+                    -scale_panel_value(4_000, panel_rate)
+                } else {
+                    4_000
+                };
                 self.panel_damage_taken
                     .entry(id)
                     .and_modify(|value| *value = value.saturating_add(delta))
@@ -255,8 +261,15 @@ impl Runtime {
             } else if panel_id == 42 {
                 let hp = i32_field(member, "hp").unwrap_or(0).max(0);
                 let max_hp = i32_field(member, "max_hp").unwrap_or(0).max(0);
-                member
-                    .set_field_by_name("hp", Value::I32(hp.saturating_add(max_hp / 4).min(max_hp)));
+                let rate = i64::from(scale_panel_value(2_500, panel_rate));
+                let heal = i64::from(max_hp).saturating_mul(rate) / 10_000;
+                member.set_field_by_name(
+                    "hp",
+                    Value::I32(
+                        hp.saturating_add(i32::try_from(heal).unwrap_or(i32::MAX))
+                            .min(max_hp),
+                    ),
+                );
             }
         }
         state.set_field_by_name(

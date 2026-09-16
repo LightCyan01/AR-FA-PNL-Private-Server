@@ -344,7 +344,8 @@ impl Runtime {
                         *stat_rates.entry(rule.operation.clone()).or_default() += i64::from(value);
                     }
                     "physical_taken" | "magic_taken" | "taken_down" | "attribute_taken"
-                    | "panel_disable" | "panel_convert" | "healing" | "healing_received"
+                    | "panel_disable" | "panel_convert" | "panel_potency"
+                    | "healing" | "healing_received"
                     | "regeneration" | "negative_immunity" | "abnormal_immunity"
                     | "positive_immunity" | "negative_potency" | "positive_potency"
                     | "damage_immunity" | "cover" | "cleanse_positive"

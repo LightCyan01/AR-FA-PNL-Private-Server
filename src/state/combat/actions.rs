@@ -499,8 +499,11 @@ fn build_character_selection_targets(
             .count(),
     )
     .map_err(|_| StateError::InvalidRequest)?;
-    let panel = battle_panel_multiplier(state);
-    let break_panel = battle_panel_break_multiplier(state);
+    let (panel, break_panel) = if let Some(runtime) = runtime {
+        (runtime.panel_multiplier(state)?, runtime.panel_break_multiplier(state)?)
+    } else {
+        (battle_panel_multiplier(state), battle_panel_break_multiplier(state))
+    };
     let target_type = skill.skill_target_type.ok_or(StateError::InvalidRequest)?;
     let target_member_type = if matches!(target_type, 1 | 2 | 4) {
         0

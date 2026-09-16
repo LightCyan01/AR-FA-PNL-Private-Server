@@ -804,8 +804,12 @@ impl Runtime {
                 } else {
                     value
                 };
-                self.instances.retain(|i| {
-                    !(i.source == source_id && i.target == target_id && i.rule.id == rule.id)
+                self.instances.retain(|instance| {
+                    !(instance.target == target_id && if rule.operation == "panel_potency" {
+                        instance.rule.operation == "panel_potency"
+                    } else {
+                        instance.source == source_id && instance.rule.id == rule.id
+                    })
                 });
                 let source_character_id =
                     message_i32_field(&source, "ally", "character_id").unwrap_or_default();

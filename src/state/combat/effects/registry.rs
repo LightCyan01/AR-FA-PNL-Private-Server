@@ -206,6 +206,7 @@ pub(crate) struct Registry {
     pub(crate) negative_immunity_state_ids: Vec<i32>,
     pub(crate) abnormal_immunity_state_ids: Vec<i32>,
     pub(crate) positive_immunity_state_ids: Vec<i32>,
+    pub(crate) enhancement_panel_ids: Vec<i32>,
     pub(crate) lamp_skills: BTreeMap<i32, LampSkillRule>,
     pub(crate) lamp_abilities: BTreeMap<i32, LampAbilityRule>,
     pub(crate) status_durations_by_skill: BTreeMap<i32, BTreeMap<i32, i32>>,
@@ -344,6 +345,7 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                         | "attribute_taken"
                         | "panel_disable"
                         | "panel_convert"
+                        | "panel_potency"
                         | "field_effect"
                         | "summons"
                         | "skill_form"
@@ -444,12 +446,14 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
         || data.negative_immunity_state_ids.is_empty()
         || data.abnormal_immunity_state_ids.is_empty()
         || data.positive_immunity_state_ids.is_empty()
+        || data.enhancement_panel_ids.is_empty()
         || data.negative_state_ids.iter().any(|id| *id <= 0)
         || data.positive_state_ids.iter().any(|id| *id <= 0)
         || data.abnormal_state_ids.iter().any(|id| *id <= 0)
         || data.negative_immunity_state_ids.iter().any(|id| *id <= 0)
         || data.abnormal_immunity_state_ids.iter().any(|id| *id <= 0)
         || data.positive_immunity_state_ids.iter().any(|id| *id <= 0)
+        || data.enhancement_panel_ids.iter().any(|id| *id <= 0)
         || data.lamp_skills.iter().any(|(skill_id, rule)| {
             *skill_id <= 0
                 || rule.maximum <= 0

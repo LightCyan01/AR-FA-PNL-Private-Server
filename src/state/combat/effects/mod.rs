@@ -14,6 +14,7 @@ mod runtime_lamp;
 mod runtime_lifecycle;
 mod runtime_match;
 mod runtime_nested;
+mod runtime_panel;
 mod runtime_potency;
 mod runtime_results;
 mod runtime_scaling;
