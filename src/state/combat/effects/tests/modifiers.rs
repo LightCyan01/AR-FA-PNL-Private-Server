@@ -361,6 +361,18 @@ fn attribute_resistance_down_affects_only_matching_damage() {
 
 #[test]
 fn common_active_modifiers_change_only_their_declared_buckets() {
+    assert!(rule_for(91001380, "active", "skill", 11001769)
+        .unwrap()
+        .is_none());
+    for (effect_id, minimum) in [(91001043, 50), (91001044, 100)] {
+        let rule = rule_for(effect_id, "instant", "skill", 12000516)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (rule.operation.as_str(), rule.summary, rule.condition.get("hp_min")),
+            ("summary", 1, Some(&minimum))
+        );
+    }
     for skill_id in [12001414, 12003316] {
         let rule = rule_for(91001314, "active", "skill", skill_id)
             .unwrap()
