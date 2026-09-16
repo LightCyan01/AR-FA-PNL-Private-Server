@@ -459,6 +459,26 @@ fn common_active_modifiers_change_only_their_declared_buckets() {
     assert_eq!(state_change_summary_value(&target, 2), 1_200);
     assert_eq!(state_change_summary_value(&target, 17), 2_500);
     assert_eq!(healing_amount(100, &target, &target).unwrap(), 70);
+    runtime
+        .apply(
+            &proto,
+            &mut state,
+            1,
+            &[TutorialSkillEffect {
+                id: 780052002,
+                value: 10_000,
+            }],
+            &[2],
+            true,
+            "after",
+            None,
+        )
+        .unwrap();
+    let recovery_locked = message_list(&state, "members")
+        .into_iter()
+        .find(|member| i32_field(member, "member_id") == Some(2))
+        .unwrap();
+    assert_eq!(healing_amount(100, &target, &recovery_locked).unwrap(), 0);
     assert_eq!(
         runtime
             .instances
