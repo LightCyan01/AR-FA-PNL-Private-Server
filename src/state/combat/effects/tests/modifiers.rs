@@ -360,6 +360,19 @@ fn attribute_resistance_down_affects_only_matching_damage() {
 
 #[test]
 fn common_active_modifiers_change_only_their_declared_buckets() {
+    let received_healing = rule_for(780132010, "active", "skill", 32003897)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            received_healing.operation.as_str(),
+            received_healing.target.as_str(),
+            received_healing.sign,
+            &received_healing.expiry,
+            received_healing.duration,
+        ),
+        ("healing_received", "enemies", -1, &Expiry::Turn, 2)
+    );
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../schemas/atelier-resleriana-2.16.0.protoset"
