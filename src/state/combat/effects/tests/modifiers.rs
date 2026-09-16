@@ -372,6 +372,19 @@ fn common_active_modifiers_change_only_their_declared_buckets() {
             ("summary", 11, &Expiry::Attacked, duration)
         );
     }
+    let speed_down = rule_for(780016004, "active", "skill", 32005161)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            speed_down.operation.as_str(),
+            speed_down.target.as_str(),
+            speed_down.sign,
+            &speed_down.expiry,
+            speed_down.duration,
+        ),
+        ("speed", "targets", -1, &Expiry::Turn, 3)
+    );
     let received_healing = rule_for(780132010, "active", "skill", 32003897)
         .unwrap()
         .unwrap();
