@@ -398,10 +398,11 @@ impl Runtime {
                 }
             }
             for active in self.instances.iter().filter(|i| i.target == id) {
-                // Trigger predicates select the attack that creates an instance;
-                // once it exists, its client-visible state is unconditional until
-                // expiry. Non-trigger contextual rules remain formula-only.
-                if !contextual_rule(&active.rule) || active.rule.trigger.is_some() {
+                // Application predicates are already satisfied before the instance exists.
+                if !contextual_rule(&active.rule)
+                    || active.rule.trigger.is_some()
+                    || active.rule.target_broken
+                {
                     add(&active.rule, active.value)?;
                 }
                 let entry = visible.entry(active.rule.state_id).or_default();

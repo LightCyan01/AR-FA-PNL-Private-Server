@@ -9,6 +9,14 @@ fn common_support_effects_keep_their_scope_and_conditions() {
         "/../schemas/atelier-resleriana-2.16.0.protoset"
     )))
     .unwrap();
+    let broken_attack = rule_for(91001162, "active", "skill", 14000696)
+        .unwrap()
+        .unwrap();
+    assert_eq!(broken_attack.operation, "attack");
+    assert_eq!(broken_attack.target, "highest_attack_ally");
+    assert!(broken_attack.target_broken);
+    assert_eq!(broken_attack.expiry, Expiry::Turn);
+    assert_eq!(broken_attack.duration, 1);
     let member = |member_id, member_type| {
         let mut status = empty_message(&proto, "blend.model.BattleCharacterStatus").unwrap();
         for field in ["attack", "defense", "hp", "magic", "mental", "speed"] {
