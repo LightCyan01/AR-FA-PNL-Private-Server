@@ -2,7 +2,8 @@ use super::registry::rule_for;
 use super::runtime::Runtime;
 use super::runtime_lamp::lamp_condition_matches;
 use super::runtime_match::{
-    amount, condition, context_matches, contextual_recipient, contextual_rule, target_condition,
+    amount, condition, context_matches, contextual_recipient, contextual_rule,
+    opponent_condition, opponent_contextual_rule, target_condition,
 };
 use crate::state::combat::prelude::*;
 
@@ -110,6 +111,8 @@ impl Runtime {
                     && passive.rule.trigger.is_none()
                     && contextual_rule(&passive.rule)
                     && contextual_recipient(passive, recipient)
+                    && (!opponent_contextual_rule(&passive.rule)
+                        || opponent.is_some_and(|target| opponent_condition(&passive.rule, target)))
                     && (!passive.rule.weak_only
                         || opponent.is_some_and(|target| {
                             preferred_attack_attribute(target, skill)
@@ -138,6 +141,8 @@ impl Runtime {
                     && instance.rule.summary == summary
                     && contextual_rule(&instance.rule)
                     && instance.rule.trigger.is_none()
+                    && (!opponent_contextual_rule(&instance.rule)
+                        || opponent.is_some_and(|target| opponent_condition(&instance.rule, target)))
                     && context_matches(
                         &instance.rule,
                         instance.source_character_id,

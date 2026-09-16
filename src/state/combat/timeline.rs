@@ -446,14 +446,14 @@ pub(crate) fn policy_damage(
     let skill_damage_bonus = checked_i32(
         i64::from(state_change_summary_value(attacker, 1))
             + runtime.map_or(0, |runtime| {
-                runtime.contextual_summary(attacker, skill, critical, 1)
+                runtime.contextual_summary_against(attacker, Some(target), skill, critical, 1)
             })
             + effects::instant_summary_for_source(Some(attacker), skill, target, critical, 1)?
             + effects::scaled_skill_damage(skill, attacker, opponent_count)?
             + policy_hp_damage_bonus(attacker, skill)?
             - i64::from(state_change_summary_value(attacker, 2))
             - runtime.map_or(0, |runtime| {
-                runtime.contextual_summary(attacker, skill, critical, 2)
+                runtime.contextual_summary_against(attacker, Some(target), skill, critical, 2)
             }),
     )?;
     let base = policy_damage_from_stats(
@@ -532,7 +532,7 @@ pub(crate) fn policy_break_damage(
     let rate = (10_000i64
         + i64::from(state_change_summary_value(attacker, 3))
         + runtime.map_or(0, |runtime| {
-            runtime.contextual_summary(attacker, skill, critical, 3)
+            runtime.contextual_summary_against(attacker, Some(target), skill, critical, 3)
         })
         + effects::instant_summary_for_source(Some(attacker), skill, target, critical, 3)?
         + effects::scaled_break_damage(skill, attacker)?)

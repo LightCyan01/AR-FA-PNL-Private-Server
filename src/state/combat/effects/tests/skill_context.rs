@@ -411,6 +411,124 @@ fn conditional_memoria_and_equipment_follow_attack_context() {
         3_000
     );
 
+    let target_negative_skill = rules
+        .skills
+        .iter()
+        .find(|skill| skill.id == 22001049)
+        .unwrap();
+    assert_eq!(
+        instant_summary(target_negative_skill, &enemy, false, 1).unwrap(),
+        0
+    );
+    let mut negative = empty_message(&proto, "blend.model.BattleStateChange").unwrap();
+    negative.set_field_by_name(
+        "state_change_id",
+        Value::I32(registry().unwrap().negative_state_ids[0]),
+    );
+    let mut negative_enemy = enemy.clone();
+    let mut target_states = message_list(&negative_enemy, "state_changes")
+        .into_iter()
+        .map(Value::Message)
+        .collect::<Vec<_>>();
+    target_states.push(Value::Message(negative));
+    negative_enemy.set_field_by_name("state_changes", Value::List(target_states));
+    assert_eq!(
+        instant_summary(target_negative_skill, &negative_enemy, false, 1).unwrap(),
+        3_000
+    );
+
+    let negative_rule = rule_for(780132012, "active", "skill", 20009597)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            negative_rule.target.as_str(),
+            &negative_rule.expiry,
+            negative_rule.duration,
+            negative_rule.condition.get("opponent_negative"),
+        ),
+        ("allies", &Expiry::Turn, 2, Some(&1))
+    );
+    assert!(super::super::runtime_match::condition(
+        negative_rule,
+        &actor()
+    ));
+    let mut negative_runtime = base_runtime();
+    negative_runtime
+        .instances
+        .push(super::super::runtime::Instance {
+            source: actor_id,
+            source_character_id: 0,
+            target: actor_id,
+            value: 5_000,
+            remaining: 2,
+            rule: negative_rule.clone(),
+        });
+    assert_eq!(
+        negative_runtime.contextual_summary_against(
+            &actor(),
+            Some(&enemy),
+            &physical,
+            false,
+            1,
+        ),
+        0
+    );
+    assert_eq!(
+        negative_runtime.contextual_summary_against(
+            &actor(),
+            Some(&negative_enemy),
+            &physical,
+            false,
+            1,
+        ),
+        5_000
+    );
+    let damage = |runtime| {
+        policy_damage(
+            &proto,
+            &rules,
+            &actor(),
+            &negative_enemy,
+            &physical,
+            None,
+            runtime,
+            1,
+            (100, 100),
+            false,
+            false,
+            10_000,
+        )
+        .unwrap()
+    };
+    assert!(damage(Some(&negative_runtime)) > damage(None));
+
+    let abnormal_rule = rule_for(780132012, "active", "skill", 32001336)
+        .unwrap()
+        .unwrap();
+    assert_eq!(abnormal_rule.condition.get("opponent_abnormal"), Some(&1));
+    let mut abnormal_runtime = base_runtime();
+    abnormal_runtime
+        .instances
+        .push(super::super::runtime::Instance {
+            source: actor_id,
+            source_character_id: 0,
+            target: actor_id,
+            value: 2_500,
+            remaining: 2,
+            rule: abnormal_rule.clone(),
+        });
+    assert_eq!(
+        abnormal_runtime.contextual_summary_against(
+            &actor(),
+            Some(&enemy),
+            &physical,
+            false,
+            1,
+        ),
+        2_500
+    );
+
     let mut static_state = clean_state.clone();
     let mut static_runtime = base_runtime();
     let actor_character_id = message_i32_field(&actor(), "ally", "character_id").unwrap_or(0);

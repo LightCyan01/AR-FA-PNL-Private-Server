@@ -22,6 +22,8 @@ pub(super) fn condition(rule: &Rule, source: &DynamicMessage) -> bool {
                 | "target_state_id"
                 | "target_state_count_id"
                 | "target_state_count_min"
+                | "opponent_negative"
+                | "opponent_abnormal"
                 | "skill_lamp_full"
         )
     }) && rule
@@ -207,6 +209,34 @@ pub(super) fn contextual_rule(rule: &Rule) -> bool {
         || !rule.attack_attributes.is_empty()
         || !rule.source_state_ids.is_empty()
         || rule.condition.contains_key("target_state_id")
+        || opponent_contextual_rule(rule)
+}
+
+pub(super) fn opponent_contextual_rule(rule: &Rule) -> bool {
+    rule.condition.contains_key("opponent_negative")
+        || rule.condition.contains_key("opponent_abnormal")
+}
+
+pub(super) fn opponent_condition(rule: &Rule, target: &DynamicMessage) -> bool {
+    let has = |ids: &[i32]| {
+        message_list(target, "state_changes").iter().any(|change| {
+            ids.contains(&i32_field(change, "state_change_id").unwrap_or_default())
+        })
+    };
+    rule.condition
+        .get("opponent_negative")
+        .is_none_or(|required| {
+            *required == 0 || registry().ok().is_some_and(|rules| has(&rules.negative_state_ids))
+        })
+        && rule
+            .condition
+            .get("opponent_abnormal")
+            .is_none_or(|required| {
+                *required == 0
+                    || registry()
+                        .ok()
+                        .is_some_and(|rules| has(&rules.abnormal_state_ids))
+            })
 }
 
 pub(super) fn context_matches(
