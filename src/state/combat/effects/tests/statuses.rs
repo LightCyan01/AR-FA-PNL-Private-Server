@@ -149,6 +149,18 @@ fn direct_statuses_stack_tick_and_gate_the_turn() {
             ("status", "targets", 940005, 2)
         );
     }
+    let blind = rule_for(91001388, "active", "skill", 12003642)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            blind.operation.as_str(),
+            blind.target.as_str(),
+            blind.state_id,
+            blind.duration,
+        ),
+        ("status", "targets", 940002, 1)
+    );
     assert_eq!(explicit_poison_skill.state_change_application_rate, 8_000);
     assert_eq!(
         gameplay
