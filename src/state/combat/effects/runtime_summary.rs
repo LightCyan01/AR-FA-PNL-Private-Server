@@ -110,6 +110,8 @@ impl Runtime {
                     && passive.rule.trigger.is_none()
                     && contextual_rule(&passive.rule)
                     && contextual_recipient(passive, recipient)
+                    && (passive.rule.condition.get("target_state_id").is_none()
+                        || opponent.is_some_and(|target| target_condition(&passive.rule, target)))
                     && (!passive.rule.target_broken
                         || opponent.is_some_and(|target| {
                             member_status(target, "enemy")

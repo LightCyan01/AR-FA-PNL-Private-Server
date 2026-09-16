@@ -205,6 +205,7 @@ pub(super) fn contextual_rule(rule: &Rule) -> bool {
         || !rule.skill_target_types.is_empty()
         || !rule.attack_attributes.is_empty()
         || !rule.source_state_ids.is_empty()
+        || rule.condition.contains_key("target_state_id")
 }
 
 pub(super) fn context_matches(

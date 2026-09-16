@@ -358,6 +358,21 @@ fn conditional_memoria_and_equipment_follow_attack_context() {
         contextual.contextual_summary_against(&actor(), Some(&enemy), &physical, false, 4),
         3_000
     );
+    add_passive(&mut contextual, 120000276, 500, 0);
+    assert_eq!(
+        contextual.contextual_summary_against(&actor(), Some(&enemy), &physical, false, 3),
+        0
+    );
+    let mut poison = empty_message(&proto, "blend.model.BattleStateChange").unwrap();
+    poison.set_field_by_name("state_change_id", Value::I32(940007));
+    enemy.set_field_by_name(
+        "state_changes",
+        Value::List(vec![Value::Message(poison)]),
+    );
+    assert_eq!(
+        contextual.contextual_summary_against(&actor(), Some(&enemy), &physical, false, 3),
+        500
+    );
 
     let mut static_state = clean_state.clone();
     let mut static_runtime = base_runtime();
