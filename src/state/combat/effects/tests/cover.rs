@@ -99,7 +99,12 @@ fn guard_effects_redirect_supported_scopes_and_apply_damage_down() {
     );
 
     for (skill_id, effect_id, duration) in
-        [(22001178, 91001398, 2), (32000669, 780008001, 3)]
+        [
+            (22001178, 91001398, 2),
+            (32000669, 780008001, 3),
+            (20007567, 780053002, 3),
+            (20002721, 780054002, 3),
+        ]
     {
         runtime
             .apply_for_action(
