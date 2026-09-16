@@ -161,6 +161,19 @@ fn direct_statuses_stack_tick_and_gate_the_turn() {
         ),
         ("status", "targets", 940002, 1)
     );
+    let resistance_down = rule_for(780132011, "active", "skill", 32003897)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            resistance_down.operation.as_str(),
+            resistance_down.target.as_str(),
+            resistance_down.sign,
+            &resistance_down.expiry,
+            resistance_down.duration,
+        ),
+        ("abnormal_resistance", "enemies", -1, &Expiry::Turn, 2)
+    );
     assert_eq!(explicit_poison_skill.state_change_application_rate, 8_000);
     assert_eq!(
         gameplay
