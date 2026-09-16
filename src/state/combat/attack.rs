@@ -334,7 +334,7 @@ pub(crate) fn apply_attack_results(
                 variance,
             )?
         };
-        let break_damage = if !is_tool && target_enemy.is_some() {
+        let mut break_damage = if !is_tool && target_enemy.is_some() {
             policy_break_damage(
                 &members[actor_index],
                 &members[target_index],
@@ -359,6 +359,9 @@ pub(crate) fn apply_attack_results(
         let mut newly_broken = false;
         if let Some(mut enemy) = target_enemy {
             let old_break = i32_field(&enemy, "break_gauge").unwrap_or(0).max(0);
+            if !is_tool && effects::instant_break_gauge_zero(skill, &members[target_index])? {
+                break_damage = break_damage.max(old_break);
+            }
             let new_break = old_break.saturating_sub(break_damage).max(0);
             newly_broken = old_break > 0 && new_break == 0;
             enemy.set_field_by_name("break_gauge", Value::I32(new_break));

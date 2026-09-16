@@ -1,4 +1,5 @@
 mod caps;
+mod break_effects;
 mod cover;
 mod legacy_modifiers;
 mod lifetimes;

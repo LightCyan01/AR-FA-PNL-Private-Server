@@ -79,6 +79,26 @@ pub(crate) fn instant_summary_for_source(
     })
 }
 
+pub(crate) fn instant_break_gauge_zero(
+    skill: &TutorialSkill,
+    target: &DynamicMessage,
+) -> Result<bool, StateError> {
+    for effect in &skill.effects {
+        let Some(rule) = rule_for(effect.id, "instant", "skill", skill.id)? else {
+            continue;
+        };
+        if rule.operation == "break_gauge_zero"
+            && (!rule.weak_only
+                || target_resistance(target, preferred_attack_attribute(target, skill)?)? < 0)
+            && target_condition(rule, target)
+            && context_matches(rule, 0, skill, false)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 impl Runtime {
     pub(crate) fn contextual_summary(
         &self,

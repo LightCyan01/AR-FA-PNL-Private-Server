@@ -189,7 +189,8 @@ impl Runtime {
                 )?);
             }
             let Some(base_rule) = rule_for(effect.id, "active", "skill", skill_id)? else {
-                if !has_nested_rule {
+                if !has_nested_rule && rule_for(effect.id, "instant", "skill", skill_id)?.is_none()
+                {
                     self.unsupported.insert(effect.id);
                 }
                 continue;

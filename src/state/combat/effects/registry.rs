@@ -362,6 +362,7 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                         | "burst_gauge"
                         | "bomb_gauge"
                         | "break_gauge"
+                        | "break_gauge_zero"
                         | "remove_stack"
                         | "cleanse"
                         | "cleanse_abnormal"
