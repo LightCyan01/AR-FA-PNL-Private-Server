@@ -790,7 +790,7 @@ impl Runtime {
                     )?);
                     continue;
                 }
-                let value = self.apply_negative_potency(target_id, rule, value)?;
+                let value = self.apply_potency(target_id, rule, value)?;
                 let value = if rule.stack_cap > 0 {
                     self.instances
                         .iter()

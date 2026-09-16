@@ -1,3 +1,4 @@
+use super::super::runtime::Instance;
 use super::super::*;
 use crate::state::combat::prelude::*;
 use std::path::Path;
@@ -512,6 +513,69 @@ fn common_active_modifiers_change_only_their_declared_buckets() {
             .map(|instance| instance.remaining),
         Some(2)
     );
+}
+
+#[test]
+fn received_effect_potency_scales_matching_effects_and_expires() {
+    let negative_down = rule_for(71187001, "active", "skill", 22001609)
+        .unwrap()
+        .unwrap()
+        .clone();
+    assert_eq!(
+        (
+            negative_down.operation.as_str(),
+            negative_down.target.as_str(),
+            negative_down.sign,
+            negative_down.state_id,
+            negative_down.duration,
+        ),
+        ("negative_potency", "self", -1, 910099, 2)
+    );
+    let positive_down = rule_for(71146004, "active", "skill", 22000989)
+        .unwrap()
+        .unwrap()
+        .clone();
+    assert_eq!(
+        (
+            positive_down.operation.as_str(),
+            positive_down.target.as_str(),
+            positive_down.sign,
+            positive_down.state_id,
+            positive_down.duration,
+        ),
+        ("positive_potency", "enemies", -1, 720016, 3)
+    );
+
+    let mut runtime = Runtime::default();
+    runtime.instances.push(Instance {
+        source: 1,
+        source_character_id: 0,
+        target: 1,
+        value: -5_000,
+        remaining: 2,
+        rule: negative_down,
+    });
+    let negative_effect = rule_for(780107003, "active", "skill", 0).unwrap().unwrap();
+    for expected in [1_000, 1_000, 2_000] {
+        assert_eq!(
+            runtime.apply_potency(1, negative_effect, 2_000).unwrap(),
+            expected
+        );
+    }
+    runtime.instances.push(Instance {
+        source: 1,
+        source_character_id: 0,
+        target: 2,
+        value: -3_000,
+        remaining: 3,
+        rule: positive_down,
+    });
+    let positive_effect = rule_for(91001018, "active", "skill", 0).unwrap().unwrap();
+    assert_eq!(
+        runtime.apply_potency(2, positive_effect, 1_000).unwrap(),
+        700
+    );
+    assert_eq!(runtime.instances[0].remaining, 2);
 }
 
 #[test]

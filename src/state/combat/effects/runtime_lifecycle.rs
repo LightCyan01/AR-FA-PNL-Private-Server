@@ -346,8 +346,8 @@ impl Runtime {
                     "physical_taken" | "magic_taken" | "taken_down" | "attribute_taken"
                     | "panel_disable" | "panel_convert" | "healing" | "healing_received"
                     | "regeneration" | "negative_immunity" | "abnormal_immunity"
-                    | "positive_immunity" | "negative_potency" | "damage_immunity" | "cover"
-                    | "cleanse_positive"
+                    | "positive_immunity" | "negative_potency" | "positive_potency"
+                    | "damage_immunity" | "cover" | "cleanse_positive"
                     | "evasion" | "abnormal_resistance" | "target_rate" => (), // read by combat policy
                     _ => return Err(StateError::InvalidRequest),
                 }
