@@ -3,6 +3,28 @@ use crate::state::combat::prelude::*;
 use std::path::Path;
 
 #[test]
+fn shared_enemy_panel_rules_keep_catalog_target_and_limit() {
+    let neutral = rule_for(71143001, "active", "skill", 22000107)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (neutral.target.as_str(), neutral.panel_to_id, neutral.panel_limit),
+        ("targets", 11, 1)
+    );
+    let weakened = rule_for(71146005, "active", "skill", 22000984)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            weakened.target.as_str(),
+            weakened.panel_to_id,
+            weakened.panel_limit,
+        ),
+        ("targets", 36, 1)
+    );
+}
+
+#[test]
 fn panel_disable_suppresses_non_burst_panel_for_one_target_turn() {
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
