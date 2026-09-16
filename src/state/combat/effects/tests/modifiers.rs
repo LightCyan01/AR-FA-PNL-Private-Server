@@ -576,6 +576,25 @@ fn received_effect_potency_scales_matching_effects_and_expires() {
         700
     );
     assert_eq!(runtime.instances[0].remaining, 2);
+
+    let positive_up = rule_for(120000195, "passive", "ability", 600000216)
+        .unwrap()
+        .unwrap()
+        .clone();
+    let mut passive_runtime = Runtime::default();
+    passive_runtime.passives.push(Passive {
+        source: 2,
+        value: 1_500,
+        rule: positive_up,
+        source_character_id: 0,
+        source_type: 0,
+    });
+    assert_eq!(
+        passive_runtime
+            .apply_potency(2, positive_effect, 1_000)
+            .unwrap(),
+        1_150
+    );
 }
 
 #[test]

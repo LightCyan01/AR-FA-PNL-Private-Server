@@ -23,7 +23,17 @@ impl Runtime {
             .filter(|instance| instance.target == target && instance.rule.operation == operation)
             .fold(0i64, |total, instance| {
                 total.saturating_add(i64::from(instance.value))
-            });
+            })
+            .saturating_add(
+                self.passives
+                    .iter()
+                    .filter(|passive| {
+                        passive.source == target && passive.rule.operation == operation
+                    })
+                    .fold(0i64, |total, passive| {
+                        total.saturating_add(i64::from(passive.value))
+                    }),
+            );
         for instance in self.instances.iter_mut().filter(|instance| {
             instance.target == target
                 && instance.rule.operation == operation
