@@ -161,6 +161,18 @@ fn direct_statuses_stack_tick_and_gate_the_turn() {
         ),
         ("status", "targets", 940002, 1)
     );
+    let shared_blind = rule_for(780046020, "active", "skill", 20001613)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            shared_blind.operation.as_str(),
+            shared_blind.target.as_str(),
+            shared_blind.state_id,
+            shared_blind.duration,
+        ),
+        ("status", "targets", 940002, 3)
+    );
     let resistance_down = rule_for(780132011, "active", "skill", 32003897)
         .unwrap()
         .unwrap();
