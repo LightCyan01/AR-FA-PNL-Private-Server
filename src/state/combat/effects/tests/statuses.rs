@@ -190,6 +190,15 @@ fn direct_statuses_stack_tick_and_gate_the_turn() {
             .unwrap();
         assert_eq!((rule.state_id, rule.duration), (940007, duration));
     }
+    for (effect_id, skill_id, duration) in [
+        (780063000, 32002681, 2),
+        (780056012, 32000809, 3),
+    ] {
+        let rule = rule_for(effect_id, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!((rule.state_id, rule.duration), (940007, duration));
+    }
     let shared_poison = rule_for(1039, "active", "skill", 20000627)
         .unwrap()
         .unwrap();
