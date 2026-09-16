@@ -110,6 +110,12 @@ impl Runtime {
                     && passive.rule.trigger.is_none()
                     && contextual_rule(&passive.rule)
                     && contextual_recipient(passive, recipient)
+                    && (!passive.rule.weak_only
+                        || opponent.is_some_and(|target| {
+                            preferred_attack_attribute(target, skill)
+                                .and_then(|attribute| target_resistance(target, attribute))
+                                .is_ok_and(|resistance| resistance < 0)
+                        }))
                     && (passive.rule.condition.get("target_state_id").is_none()
                         || opponent.is_some_and(|target| target_condition(&passive.rule, target)))
                     && (!passive.rule.target_broken

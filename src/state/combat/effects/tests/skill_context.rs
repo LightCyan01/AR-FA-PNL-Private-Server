@@ -374,6 +374,43 @@ fn conditional_memoria_and_equipment_follow_attack_context() {
         500
     );
 
+    let power = rule_for(120000138, "passive", "ability", 600000092)
+        .unwrap()
+        .unwrap();
+    let damage = rule_for(120000138, "passive", "ability", 600000249)
+        .unwrap()
+        .unwrap();
+    assert_eq!((power.summary, power.weak_only), (4, true));
+    assert_eq!((damage.summary, damage.weak_only), (1, true));
+    let mut weak_runtime = base_runtime();
+    add_passive(&mut weak_runtime, 120000138, 3_000, 0);
+    let mut resistance = member_status(&enemy, "resistance").unwrap();
+    for field in [
+        "slashing",
+        "impact",
+        "piercing",
+        "fire",
+        "ice",
+        "lightning",
+        "wind",
+    ] {
+        resistance.set_field_by_name(field, Value::I32(0));
+    }
+    enemy.set_field_by_name("resistance", Value::Message(resistance.clone()));
+    assert_eq!(
+        weak_runtime.contextual_summary_against(&actor(), Some(&enemy), &physical, false, 4),
+        0
+    );
+    resistance.set_field_by_name(
+        resistance_name(preferred_attack_attribute(&enemy, &physical).unwrap()).unwrap(),
+        Value::I32(-20),
+    );
+    enemy.set_field_by_name("resistance", Value::Message(resistance));
+    assert_eq!(
+        weak_runtime.contextual_summary_against(&actor(), Some(&enemy), &physical, false, 4),
+        3_000
+    );
+
     let mut static_state = clean_state.clone();
     let mut static_runtime = base_runtime();
     let actor_character_id = message_i32_field(&actor(), "ally", "character_id").unwrap_or(0);

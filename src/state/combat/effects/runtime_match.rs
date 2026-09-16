@@ -200,6 +200,7 @@ pub(super) fn state_application_blocked(
 pub(super) fn contextual_rule(rule: &Rule) -> bool {
     rule.trigger.is_some()
         || rule.critical_only
+        || (rule.mode == "passive" && rule.weak_only)
         || rule.target_broken
         || !rule.skill_types.is_empty()
         || !rule.skill_target_types.is_empty()
