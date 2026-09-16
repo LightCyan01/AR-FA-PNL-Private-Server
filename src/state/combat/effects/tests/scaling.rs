@@ -66,6 +66,41 @@ fn skill_damage_curves_follow_live_count_hp_and_direction() {
         10_000
     );
 
+    let negative_ids = registry().unwrap().negative_state_ids.clone();
+    let target_with_negatives = |count: usize| {
+        let mut target = source.clone();
+        let changes = negative_ids
+            .iter()
+            .take(count)
+            .map(|state_id| {
+                let mut change =
+                    empty_message(&proto, "blend.model.BattleStateChange").unwrap();
+                change.set_field_by_name("state_change_id", Value::I32(*state_id));
+                Value::Message(change)
+            })
+            .collect();
+        target.set_field_by_name("state_changes", Value::List(changes));
+        target
+    };
+    for (count, expected) in [0, 1_000, 2_000, 3_000, 4_000, 5_000]
+        .into_iter()
+        .enumerate()
+    {
+        assert_eq!(
+            instant_summary(skill(20000336), &target_with_negatives(count), false, 1).unwrap(),
+            expected
+        );
+    }
+    for (count, expected) in [0, 1_000, 3_000, 6_000, 10_000, 15_000]
+        .into_iter()
+        .enumerate()
+    {
+        assert_eq!(
+            instant_summary(skill(20009932), &target_with_negatives(count), false, 1).unwrap(),
+            expected
+        );
+    }
+
     source.set_field_by_name("hp", Value::I32(100));
     assert_eq!(
         scaled_skill_damage(skill(11000511), &source, 1).unwrap(),
