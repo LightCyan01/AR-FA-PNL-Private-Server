@@ -18,20 +18,24 @@ fn skill_damage_curves_follow_live_count_hp_and_direction() {
         "resistance",
         Value::Message(empty_message(&proto, "blend.model.BattleResistance").unwrap()),
     );
-    assert_eq!(
-        rule_for(91000949, "catalog", "skill", 11000286)
-            .unwrap()
-            .unwrap()
-            .operation,
-        "scaling_metadata"
-    );
-    assert_eq!(
-        rule_for(91000943, "catalog", "skill", 12000111)
-            .unwrap()
-            .unwrap()
-            .operation,
-        "scaling_metadata"
-    );
+    for (effect_id, skill_id) in [
+        (91000949, 11000286),
+        (91001076, 11000511),
+        (91001871, 11003078),
+        (91000943, 12000111),
+        (91000950, 12000306),
+        (91001066, 14000671),
+        (91001211, 14001077),
+        (91001633, 14002426),
+    ] {
+        assert_eq!(
+            rule_for(effect_id, "catalog", "skill", skill_id)
+                .unwrap()
+                .unwrap()
+                .operation,
+            "scaling_metadata"
+        );
+    }
 
     assert_eq!(
         scaled_skill_damage(skill(11000286), &source, 1).unwrap(),
