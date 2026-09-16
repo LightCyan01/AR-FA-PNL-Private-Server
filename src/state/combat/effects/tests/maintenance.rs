@@ -291,6 +291,17 @@ fn maintenance_effects_cleanse_regenerate_and_restore_gauge() {
 
 #[test]
 fn direct_gauge_effects_update_state_and_protocol_results() {
+    let inferred_break_heal = rule_for(780022018, "active", "skill", 20007317)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            inferred_break_heal.operation.as_str(),
+            inferred_break_heal.target.as_str(),
+            inferred_break_heal.sign,
+        ),
+        ("break_gauge", "self", 1)
+    );
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../schemas/atelier-resleriana-2.16.0.protoset"
