@@ -135,6 +135,20 @@ fn direct_statuses_stack_tick_and_gate_the_turn() {
         .iter()
         .find(|skill| skill.id == 22000471)
         .unwrap();
+    for skill_id in [11001984, 12002766, 12003591, 14000566, 14002500] {
+        let rule = rule_for(91000931, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                rule.operation.as_str(),
+                rule.target.as_str(),
+                rule.state_id,
+                rule.duration,
+            ),
+            ("status", "targets", 940005, 2)
+        );
+    }
     assert_eq!(explicit_poison_skill.state_change_application_rate, 8_000);
     assert_eq!(
         gameplay
