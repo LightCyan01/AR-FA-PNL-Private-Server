@@ -131,6 +131,8 @@ pub(crate) struct Rule {
     pub(crate) owner_type: String,
     #[serde(default)]
     pub(crate) owner_id: i32,
+    #[serde(default)]
+    pub(crate) owner_index: Option<usize>,
     pub(crate) mode: String,
     pub(crate) target: String,
     pub(crate) phase: String,
@@ -235,6 +237,16 @@ pub(crate) fn rule_for(
     owner_type: &str,
     owner_id: i32,
 ) -> Result<Option<&'static Rule>, StateError> {
+    rule_for_occurrence(effect_id, mode, owner_type, owner_id, None)
+}
+
+pub(crate) fn rule_for_occurrence(
+    effect_id: i32,
+    mode: &str,
+    owner_type: &str,
+    owner_id: i32,
+    owner_index: Option<usize>,
+) -> Result<Option<&'static Rule>, StateError> {
     let rules = &registry()?.rules;
     static RULES_BY_EFFECT: OnceLock<BTreeMap<i32, Vec<usize>>> = OnceLock::new();
     let rule_indices = RULES_BY_EFFECT.get_or_init(|| {
@@ -247,22 +259,41 @@ pub(crate) fn rule_for(
     let Some(indices) = rule_indices.get(&effect_id) else {
         return Ok(None);
     };
-    Ok(indices
-        .iter()
-        .map(|position| &rules[*position])
-        .find(|rule| {
-            rule.id == effect_id
-                && rule.mode == mode
-                && rule.owner_type == owner_type
-                && rule.owner_id == owner_id
+    Ok(owner_index
+        .and_then(|owner_index| {
+            indices
+                .iter()
+                .map(|position| &rules[*position])
+                .find(|rule| {
+                    rule.id == effect_id
+                        && rule.mode == mode
+                        && rule.owner_type == owner_type
+                        && rule.owner_id == owner_id
+                        && rule.owner_index == Some(owner_index)
+                })
         })
         .or_else(|| {
-            indices.iter().map(|position| &rules[*position]).find(|rule| {
-                rule.id == effect_id
-                    && rule.mode == mode
-                    && rule.owner_type.is_empty()
-                    && rule.owner_id == 0
-            })
+            indices
+                .iter()
+                .map(|position| &rules[*position])
+                .find(|rule| {
+                    rule.id == effect_id
+                        && rule.mode == mode
+                        && rule.owner_type == owner_type
+                        && rule.owner_id == owner_id
+                        && rule.owner_index.is_none()
+                })
+        })
+        .or_else(|| {
+            indices
+                .iter()
+                .map(|position| &rules[*position])
+                .find(|rule| {
+                    rule.id == effect_id
+                        && rule.mode == mode
+                        && rule.owner_type.is_empty()
+                        && rule.owner_id == 0
+                })
         }))
 }
 
@@ -271,8 +302,14 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
     let mut ids = BTreeSet::new();
     if data.source_sha256 != source_hash
         || data.rules.iter().any(|r| {
-            !ids.insert((r.id, r.mode.as_str(), r.owner_type.as_str(), r.owner_id))
-                || (r.owner_type.is_empty() != (r.owner_id == 0))
+            !ids.insert((
+                r.id,
+                r.mode.as_str(),
+                r.owner_type.as_str(),
+                r.owner_id,
+                r.owner_index,
+            )) || (r.owner_type.is_empty() != (r.owner_id == 0))
+                || (r.owner_type.is_empty() && r.owner_index.is_some())
                 || (!r.owner_type.is_empty()
                     && !matches!(r.owner_type.as_str(), "skill" | "ability"))
                 || !matches!(
@@ -386,7 +423,10 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                     .iter()
                     .any(|id| !matches!(id, 1..=3 | 5..=8))
                 || r.trigger.as_deref().is_some_and(|trigger| {
-                    !matches!(trigger, "attack_after" | "action_after" | "battle_start")
+                    !matches!(
+                        trigger,
+                        "attack_after" | "action_after" | "party_tool_after" | "battle_start"
+                    )
                 })
         })
         || data.max_party_gauge <= 0

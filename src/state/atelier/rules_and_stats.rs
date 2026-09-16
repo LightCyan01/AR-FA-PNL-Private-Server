@@ -440,6 +440,7 @@ pub(crate) fn combat_stats(
         }
         passives.extend(tool.ability_effects.iter().map(|e| BattlePassiveEffect {
             ability_id: 0,
+            effect_index: None,
             effect: TutorialSkillEffect {
                 id: e.id,
                 value: e.value,
@@ -458,6 +459,7 @@ pub(crate) fn combat_stats(
                 .ok_or(StateError::InvalidRequest)?;
             passives.extend(effects.iter().map(|e| BattlePassiveEffect {
                 ability_id: 0,
+                effect_index: None,
                 effect: TutorialSkillEffect {
                     id: e.id,
                     value: e.value,
@@ -505,6 +507,7 @@ pub(crate) fn combat_stats(
         if let Some(effects) = memoria.rank_ability_effects.get(limit_break) {
             passives.extend(effects.iter().map(|e| BattlePassiveEffect {
                 ability_id: 0,
+                effect_index: None,
                 effect: TutorialSkillEffect {
                     id: e.id,
                     value: e.value,

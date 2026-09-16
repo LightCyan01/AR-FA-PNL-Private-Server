@@ -282,7 +282,7 @@ pub(crate) fn level_for_exp(rules: &TutorialRules, exp: i32) -> Result<i32, Stat
         .ok_or_else(|| StateError::TutorialRules("character level table has no level 1".into()))
 }
 
-pub(crate) type BattleExternalPassive = (Option<i32>, i32, TutorialSkillEffect);
+pub(crate) type BattleExternalPassive = (Option<i32>, i32, Option<usize>, TutorialSkillEffect);
 
 pub(crate) fn scaled_ability_effects(
     rules: &TutorialRules,
@@ -300,10 +300,11 @@ pub(crate) fn scaled_ability_effects(
             .iter()
             .find(|ability| ability.id == *ability_id)
             .ok_or(StateError::InvalidRequest)?;
-        for effect in &ability.effects {
+        for (effect_index, effect) in ability.effects.iter().enumerate() {
             effects.push((
                 source_character_id,
                 *ability_id,
+                Some(effect_index),
                 TutorialSkillEffect {
                     id: effect.id,
                     value: checked_i32(i64::from(effect.value) * i64::from(coefficient) / 10_000)?,
@@ -838,22 +839,29 @@ pub(crate) fn apply_leader_passives(
             .effects;
         let effects = effects
             .iter()
-            .map(|effect| {
-                let multiplier =
-                    effects::rule_for(effect.id, "passive", "ability", leader.ability_id)?
-                        .and_then(|rule| rule.condition.get("party_tag_id"))
-                        .map(|tag_id| {
-                            party
-                                .iter()
-                                .filter(|member| {
-                                    rule_character(rules, member.character_id)
-                                        .is_ok_and(|character| character.tag_ids.contains(tag_id))
-                                })
-                                .count()
+            .enumerate()
+            .map(|(effect_index, effect)| {
+                let multiplier = effects::rule_for_occurrence(
+                    effect.id,
+                    "passive",
+                    "ability",
+                    leader.ability_id,
+                    Some(effect_index),
+                )?
+                .and_then(|rule| rule.condition.get("party_tag_id"))
+                .map(|tag_id| {
+                    party
+                        .iter()
+                        .filter(|member| {
+                            rule_character(rules, member.character_id)
+                                .is_ok_and(|character| character.tag_ids.contains(tag_id))
                         })
-                        .unwrap_or(1);
+                        .count()
+                })
+                .unwrap_or(1);
                 Ok(BattlePassiveEffect {
                     ability_id: leader.ability_id,
+                    effect_index: Some(effect_index),
                     effect: TutorialSkillEffect {
                         id: effect.id,
                         value: effect
@@ -972,11 +980,12 @@ pub(crate) fn character_passives(
             ability
                 .effects
                 .iter()
-                .filter(|effect| Some(effect.value) != burst_capacity)
-                .cloned()
-                .map(|effect| BattlePassiveEffect {
+                .enumerate()
+                .filter(|(_, effect)| Some(effect.value) != burst_capacity)
+                .map(|(effect_index, effect)| BattlePassiveEffect {
                     ability_id: id,
-                    effect,
+                    effect_index: Some(effect_index),
+                    effect: effect.clone(),
                 }),
         );
     }

@@ -28,7 +28,9 @@ pub(crate) use policy::incoming_multiplier_with_runtime;
 pub(crate) use policy::{
     healing_amount, incoming_multiplier_for_skill, penetration_factor, secondary_damage,
 };
-pub(crate) use registry::{registry, rule_for, validate, Expiry, NestedActionKind};
+pub(crate) use registry::{
+    registry, rule_for, rule_for_occurrence, validate, Expiry, NestedActionKind,
+};
 pub(crate) use runtime::{Passive, PendingAction, Runtime};
 pub(crate) use runtime_cover::Protection;
 pub(crate) use runtime_lamp::{advance_skill_lamp, predicted_skill_lamp, skill_transformation};

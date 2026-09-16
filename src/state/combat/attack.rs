@@ -1297,7 +1297,7 @@ pub(crate) fn reduce_battle_attack_with_effects(
             );
             if matches!(mode, 1 | 8) && action_index + 1 == action_count {
                 resolved.effect_results.extend(
-                    effect_runtime.trigger_party_tool_lamps(proto, &mut state)?,
+                    effect_runtime.trigger_party_tool_effects(proto, &mut state)?,
                 );
             }
             state.set_field_by_name("total_turn", Value::I32(turn_number));

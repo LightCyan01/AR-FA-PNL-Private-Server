@@ -1,4 +1,4 @@
-use super::registry::{registry, rule_for, Expiry, Rule};
+use super::registry::{registry, rule_for_occurrence, Expiry, Rule};
 use super::runtime::{Baseline, Instance, NestedActionInstance, Passive, Runtime};
 use super::runtime_lamp::is_lamp_ability_effect;
 use super::runtime_match::{amount, condition, contextual_rule, selected_for_source_character};
@@ -35,15 +35,30 @@ impl Runtime {
         source_character_id: i32,
         source_type: i32,
         ability_id: i32,
+        effect_index: Option<usize>,
         effect: &TutorialSkillEffect,
         leader: bool,
     ) -> Result<(), StateError> {
         if is_lamp_ability_effect(ability_id, effect.id)?
-            || rule_for(effect.id, "catalog", "ability", ability_id)?.is_some()
+            || rule_for_occurrence(
+                effect.id,
+                "catalog",
+                "ability",
+                ability_id,
+                effect_index,
+            )?
+            .is_some()
         {
             return Ok(());
         }
-        let Some(rule) = rule_for(effect.id, "passive", "ability", ability_id)? else {
+        let Some(rule) = rule_for_occurrence(
+            effect.id,
+            "passive",
+            "ability",
+            ability_id,
+            effect_index,
+        )?
+        else {
             self.unsupported.insert(effect.id);
             return Ok(());
         };
@@ -102,6 +117,7 @@ impl Runtime {
                     character,
                     source_type,
                     passive.ability_id,
+                    passive.effect_index,
                     &passive.effect,
                     false,
                 )?;
@@ -112,6 +128,7 @@ impl Runtime {
                     character,
                     source_type,
                     passive.ability_id,
+                    passive.effect_index,
                     &passive.effect,
                     true,
                 )?;
@@ -133,30 +150,43 @@ impl Runtime {
                 })
                 .ok_or(StateError::InvalidRequest)?;
             let source_id = member_id(&source)?;
-            for (source_character_id, ability_id, effect) in external_passives {
+            for (source_character_id, ability_id, effect_index, effect) in external_passives {
                 runtime.register_passive(
                     source_id,
                     source_character_id.unwrap_or(leader.character_id),
                     0,
                     *ability_id,
+                    *effect_index,
                     effect,
                     false,
                 )?;
             }
         }
         runtime.initialize_skill_lamps(proto, state)?;
-        let start_gain = runtime
+        let mut start_gain = 0i64;
+        for passive in runtime
             .passives
             .iter()
             .filter(|passive| passive.rule.trigger.as_deref() == Some("battle_start"))
-            .try_fold(0i64, |total, passive| {
-                if passive.rule.operation != "bomb_gauge" {
-                    return Err(StateError::InvalidRequest);
+        {
+            match passive.rule.operation.as_str() {
+                "bomb_gauge" => {
+                    start_gain = start_gain
+                        .checked_add(i64::from(passive.value))
+                        .ok_or(StateError::InvalidRequest)?;
                 }
-                total
-                    .checked_add(i64::from(passive.value))
-                    .ok_or(StateError::InvalidRequest)
-            })?;
+                "heal" => {
+                    super::runtime_lamp::heal_all(
+                        proto,
+                        state,
+                        passive.source,
+                        passive.rule.id,
+                        passive.value,
+                    )?;
+                }
+                _ => return Err(StateError::InvalidRequest),
+            }
+        }
         if start_gain != 0 {
             let maximum = rules.constants.max_bomb_gauge;
             let delta = i64::from(maximum).saturating_mul(start_gain) / 10_000;

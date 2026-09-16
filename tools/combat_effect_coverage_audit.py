@@ -128,7 +128,7 @@ def reachable_owner_ids(master: dict) -> dict[str, set[int]]:
     }
 
 
-def occurrences(master: dict) -> list[tuple[str, int, int]]:
+def occurrences(master: dict) -> list[tuple[str, int, int, int]]:
     result = []
     reachable = reachable_owner_ids(master)
     for owner_type, table in (
@@ -140,27 +140,34 @@ def occurrences(master: dict) -> list[tuple[str, int, int]]:
         for owner in master[table]:
             if int(owner["id"]) not in reachable[owner_type]:
                 continue
-            for effect in owner.get("effects") or []:
-                result.append((owner_type, int(owner["id"]), int(effect["id"])))
+            for owner_index, effect in enumerate(owner.get("effects") or []):
+                result.append(
+                    (owner_type, int(owner["id"]), owner_index, int(effect["id"]))
+                )
     return result
 
 
-def audit(master: dict, rules: dict, source_hash: str) -> tuple[list[tuple[str, int, int]], Counter]:
+def audit(
+    master: dict, rules: dict, source_hash: str
+) -> tuple[list[tuple[str, int, int, int]], Counter]:
     require(
         rules.get("source_sha256", "").upper() == source_hash,
         "combat effect rules source hash is stale",
     )
     runtime_modes: dict[int, set[str]] = {}
-    owner_modes: dict[tuple[str, int, int], set[str]] = {}
+    owner_modes: dict[tuple[str, int, int | None, int], set[str]] = {}
     runtime_keys = set()
     for rule in rules["rules"]:
         owner_type = rule.get("owner_type", "")
         owner_id = int(rule.get("owner_id", 0))
-        key = (int(rule["id"]), rule["mode"], owner_type, owner_id)
+        owner_index = rule.get("owner_index")
+        key = (int(rule["id"]), rule["mode"], owner_type, owner_id, owner_index)
         require(key not in runtime_keys, "duplicate runtime effect rule")
         runtime_keys.add(key)
         if owner_type:
-            owner_modes.setdefault((owner_type, owner_id, key[0]), set()).add(key[1])
+            owner_modes.setdefault(
+                (owner_type, owner_id, owner_index, key[0]), set()
+            ).add(key[1])
         else:
             runtime_modes.setdefault(key[0], set()).add(key[1])
     nested = {
@@ -192,19 +199,24 @@ def audit(master: dict, rules: dict, source_hash: str) -> tuple[list[tuple[str, 
         catalog_mechanics.add(("ability", int(ability["id"]), effect_ids[0]))
     missing = []
     for occurrence in occurrences(master):
-        owner_type, owner_id, effect_id = occurrence
-        modes = runtime_modes.get(effect_id, set()) | owner_modes.get(occurrence, set())
+        owner_type, owner_id, owner_index, effect_id = occurrence
+        semantic_occurrence = (owner_type, owner_id, effect_id)
+        modes = (
+            runtime_modes.get(effect_id, set())
+            | owner_modes.get((owner_type, owner_id, None, effect_id), set())
+            | owner_modes.get(occurrence, set())
+        )
         expected = {"passive"} if owner_type == "ability" else {"active", "instant"}
         executable = bool(modes & expected)
         if (
             not executable
             and "catalog" not in modes
-            and occurrence not in nested
-            and occurrence not in lamp_mechanics
-            and occurrence not in catalog_mechanics
+            and semantic_occurrence not in nested
+            and semantic_occurrence not in lamp_mechanics
+            and semantic_occurrence not in catalog_mechanics
         ):
             missing.append(occurrence)
-    return missing, Counter(owner_type for owner_type, _, _ in missing)
+    return missing, Counter(owner_type for owner_type, _, _, _ in missing)
 
 
 def main() -> None:
@@ -223,11 +235,16 @@ def main() -> None:
     missing, by_owner = audit(master, rules, source_hash)
     if missing:
         descriptions = {int(row["id"]): row.get("description", "") for row in master["effect"]}
-        owners = {effect_id: (owner_type, owner_id) for owner_type, owner_id, effect_id in missing}
+        owners = {
+            effect_id: (owner_type, owner_id)
+            for owner_type, owner_id, _, effect_id in missing
+        }
         details = " ".join(
             f"{effect_id}x{count}@{owners[effect_id][0]}:{owners[effect_id][1]}"
             f"[{descriptions.get(effect_id, '')}]"
-            for effect_id, count in Counter(effect_id for _, _, effect_id in missing).most_common(
+            for effect_id, count in Counter(
+                effect_id for _, _, _, effect_id in missing
+            ).most_common(
                 max(args.limit, 0)
             )
         )

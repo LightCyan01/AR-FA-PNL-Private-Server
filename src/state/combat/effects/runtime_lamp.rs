@@ -128,7 +128,7 @@ fn add_lamp(
     Ok(())
 }
 
-fn heal_all(
+pub(super) fn heal_all(
     proto: &ProtoRegistry,
     state: &mut DynamicMessage,
     source_id: i32,
@@ -241,7 +241,7 @@ impl Runtime {
         Ok(triggered)
     }
 
-    pub(crate) fn trigger_party_tool_lamps(
+    pub(crate) fn trigger_party_tool_effects(
         &self,
         proto: &ProtoRegistry,
         state: &mut DynamicMessage,
@@ -266,6 +266,20 @@ impl Runtime {
                     rule.heal_value,
                 )?);
             }
+        }
+        for passive in self.passives.iter().filter(|passive| {
+            passive.rule.trigger.as_deref() == Some("party_tool_after")
+        }) {
+            if passive.rule.operation != "heal" {
+                return Err(StateError::InvalidRequest);
+            }
+            results.extend(heal_all(
+                proto,
+                state,
+                passive.source,
+                passive.rule.id,
+                passive.value,
+            )?);
         }
         Ok(results)
     }
@@ -483,7 +497,7 @@ mod tests {
         assert_eq!(predicted_skill_lamp(member, 12001539).unwrap(), Some(0));
 
         advance_skill_lamp(&mut state, 1, 12001539).unwrap();
-        runtime.trigger_party_tool_lamps(&proto, &mut state).unwrap();
+        runtime.trigger_party_tool_effects(&proto, &mut state).unwrap();
         let members = message_list(&state, "members");
         let member = &members[0];
         assert_eq!(current_lamp(member, 12001539).unwrap(), 1);

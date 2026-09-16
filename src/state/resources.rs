@@ -22,6 +22,7 @@ pub(crate) struct GachaMutation {
 #[derive(Debug, Clone)]
 pub(crate) struct BattlePassiveEffect {
     pub(crate) ability_id: i32,
+    pub(crate) effect_index: Option<usize>,
     pub(crate) effect: TutorialSkillEffect,
 }
 

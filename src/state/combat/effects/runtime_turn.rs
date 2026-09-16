@@ -1,5 +1,6 @@
 use super::registry::Expiry;
 use super::runtime::{Instance, Runtime};
+use super::runtime_lamp::heal_all;
 use super::runtime_match::{condition, context_matches, selected_for_source_character};
 use super::runtime_results::{effect_result, turn_state_change_result};
 use crate::state::combat::prelude::*;
@@ -289,30 +290,40 @@ impl Runtime {
                     _ => false,
                 }
         }) {
-            if passive.rule.operation != "bomb_gauge" {
-                return Err(StateError::InvalidRequest);
+            match passive.rule.operation.as_str() {
+                "bomb_gauge" => {
+                    let maximum = rules.constants.max_bomb_gauge;
+                    let current = i32_field(state, "bomb_gauge").unwrap_or_default().max(0);
+                    let delta =
+                        i64::from(maximum).saturating_mul(i64::from(passive.value)) / 10_000;
+                    let next = i64::from(current)
+                        .saturating_add(delta)
+                        .clamp(0, i64::from(maximum)) as i32;
+                    state.set_field_by_name("bomb_gauge", Value::I32(next));
+                    let mut result = effect_result(
+                        proto,
+                        passive.rule.id,
+                        passive.source,
+                        source_id,
+                        false,
+                        &passive.rule,
+                        passive.value,
+                    )?;
+                    result.set_field_by_name(
+                        "add_bomb_gauge",
+                        Value::Message(wrapper_i32(proto, next - current)?),
+                    );
+                    triggered.push(result);
+                }
+                "heal" => triggered.extend(heal_all(
+                    proto,
+                    state,
+                    passive.source,
+                    passive.rule.id,
+                    passive.value,
+                )?),
+                _ => return Err(StateError::InvalidRequest),
             }
-            let maximum = rules.constants.max_bomb_gauge;
-            let current = i32_field(state, "bomb_gauge").unwrap_or_default().max(0);
-            let delta = i64::from(maximum).saturating_mul(i64::from(passive.value)) / 10_000;
-            let next = i64::from(current)
-                .saturating_add(delta)
-                .clamp(0, i64::from(maximum)) as i32;
-            state.set_field_by_name("bomb_gauge", Value::I32(next));
-            let mut result = effect_result(
-                proto,
-                passive.rule.id,
-                passive.source,
-                source_id,
-                false,
-                &passive.rule,
-                passive.value,
-            )?;
-            result.set_field_by_name(
-                "add_bomb_gauge",
-                Value::Message(wrapper_i32(proto, next - current)?),
-            );
-            triggered.push(result);
         }
         if skill.skill_effect_type != 1 {
             return Ok(triggered);

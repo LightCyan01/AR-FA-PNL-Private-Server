@@ -117,6 +117,138 @@ fn effect_healing_uses_max_hp_and_protocol_target_scope() {
 }
 
 #[test]
+fn triggered_ability_heals_bind_by_catalog_slot() {
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let rules = load_tutorial_rules().unwrap();
+    let fresh = load_fresh_rules().unwrap();
+    let opened = reduce_talk_event(
+        &proto,
+        &fresh,
+        &rules,
+        starter_resources(&proto, &fresh).unwrap(),
+        101001001,
+        1,
+    )
+    .unwrap();
+    let start = reduce_battle_start(&proto, &rules, opened.resources, 101001002, 1).unwrap();
+    let mut state = start.state;
+    let source_member = message_list(&state, "members")
+        .into_iter()
+        .find(|member| member_type(member).ok() == Some(0))
+        .unwrap();
+    let source = member_id(&source_member).unwrap();
+    let character_id = message_i32_field(&source_member, "ally", "character_id").unwrap();
+    let party = [BattlePartyMember {
+        character_id,
+        level: 1,
+        rarity: 3,
+        memoria_id: None,
+        position: 1,
+        is_leader: true,
+        integrated_stats: None,
+        damage_bonus: 0,
+        skills: Vec::new(),
+        ability_ids: Vec::new(),
+        passives: Vec::new(),
+        leader_passives: Vec::new(),
+    }];
+    let external = [
+        (
+            None,
+            1990531,
+            Some(1),
+            TutorialSkillEffect {
+                id: 72001131,
+                value: 1_000,
+            },
+        ),
+        (
+            None,
+            1990531,
+            Some(4),
+            TutorialSkillEffect {
+                id: 72001131,
+                value: 10_000,
+            },
+        ),
+        (
+            None,
+            1990322,
+            Some(1),
+            TutorialSkillEffect {
+                id: 72001131,
+                value: 500,
+            },
+        ),
+    ];
+    let lower_hp = |state: &mut DynamicMessage| {
+        let mut members = message_list(state, "members");
+        for member in members
+            .iter_mut()
+            .filter(|member| member_type(member).ok() == Some(0))
+        {
+            member.set_field_by_name("hp", Value::I32(i32_field(member, "max_hp").unwrap() / 2));
+        }
+        state.set_field_by_name(
+            "members",
+            Value::List(members.into_iter().map(Value::Message).collect()),
+        );
+    };
+
+    lower_hp(&mut state);
+    let mut runtime = Runtime::initialize(
+        &proto,
+        &rules,
+        &mut state,
+        "triggered-heal",
+        &party,
+        &external,
+    )
+    .unwrap();
+    assert!(message_list(&state, "members")
+        .iter()
+        .filter(|member| member_type(member).ok() == Some(0))
+        .all(|member| i32_field(member, "hp") == i32_field(member, "max_hp")));
+
+    lower_hp(&mut state);
+    let skill = rules
+        .skills
+        .iter()
+        .find(|skill| skill.skill_effect_type == 1)
+        .unwrap();
+    let results = runtime
+        .trigger_attack_after(&proto, &rules, &mut state, source, skill, &[])
+        .unwrap();
+    let allies = message_list(&state, "members")
+        .into_iter()
+        .filter(|member| member_type(member).ok() == Some(0))
+        .collect::<Vec<_>>();
+    assert_eq!(results.len(), allies.len());
+    assert!(allies.iter().all(|member| {
+        let maximum = i32_field(member, "max_hp").unwrap();
+        i32_field(member, "hp") == Some(maximum / 2 + maximum / 10)
+    }));
+
+    lower_hp(&mut state);
+    let results = runtime
+        .trigger_party_tool_effects(&proto, &mut state)
+        .unwrap();
+    let allies = message_list(&state, "members")
+        .into_iter()
+        .filter(|member| member_type(member).ok() == Some(0))
+        .collect::<Vec<_>>();
+    assert_eq!(results.len(), allies.len());
+    assert!(allies.iter().all(|member| {
+        let maximum = i32_field(member, "max_hp").unwrap();
+        i32_field(member, "hp") == Some(maximum / 2 + maximum / 20)
+    }));
+}
+
+#[test]
 fn maintenance_effects_cleanse_regenerate_and_restore_gauge() {
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -442,6 +574,7 @@ fn direct_gauge_effects_update_state_and_protocol_results() {
         (
             None,
             26267010,
+            None,
             TutorialSkillEffect {
                 id: 2000392,
                 value: 10_000,
@@ -450,6 +583,7 @@ fn direct_gauge_effects_update_state_and_protocol_results() {
         (
             None,
             26267011,
+            None,
             TutorialSkillEffect {
                 id: 2000392,
                 value: 4_000,
