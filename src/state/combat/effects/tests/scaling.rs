@@ -27,6 +27,7 @@ fn skill_damage_curves_follow_live_count_hp_and_direction() {
         (91001066, 14000671),
         (91001211, 14001077),
         (91001633, 14002426),
+        (91002166, 11003617),
     ] {
         assert_eq!(
             rule_for(effect_id, "catalog", "skill", skill_id)
@@ -68,6 +69,10 @@ fn skill_damage_curves_follow_live_count_hp_and_direction() {
     assert_eq!(
         instant_summary(skill(14002551), &source, false, 1).unwrap(),
         10_000
+    );
+    assert_eq!(
+        scaled_break_damage(skill(11003617), &source).unwrap(),
+        1_000
     );
 
     let negative_ids = registry().unwrap().negative_state_ids.clone();
@@ -117,5 +122,9 @@ fn skill_damage_curves_follow_live_count_hp_and_direction() {
     assert_eq!(
         scaled_skill_damage(skill(14002426), &source, 1).unwrap(),
         15_000
+    );
+    assert_eq!(
+        scaled_break_damage(skill(11003617), &source).unwrap(),
+        4_000
     );
 }

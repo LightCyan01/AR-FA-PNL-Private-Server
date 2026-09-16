@@ -6,11 +6,27 @@ pub(crate) fn scaled_skill_damage(
     source: &DynamicMessage,
     opponent_count: i32,
 ) -> Result<i64, StateError> {
+    scaled_skill_modifier(skill, source, opponent_count, 1)
+}
+
+pub(crate) fn scaled_break_damage(
+    skill: &TutorialSkill,
+    source: &DynamicMessage,
+) -> Result<i64, StateError> {
+    scaled_skill_modifier(skill, source, 0, 3)
+}
+
+fn scaled_skill_modifier(
+    skill: &TutorialSkill,
+    source: &DynamicMessage,
+    opponent_count: i32,
+    summary: i32,
+) -> Result<i64, StateError> {
     skill.effects.iter().try_fold(0i64, |total, effect| {
         let Some(rule) = rule_for(effect.id, "instant", "skill", skill.id)? else {
             return Ok(total);
         };
-        if rule.operation != "skill_damage_scale" {
+        if rule.operation != "skill_damage_scale" || rule.summary != summary {
             return Ok(total);
         }
         let (input, denominator) = match rule.scale_by.as_str() {
