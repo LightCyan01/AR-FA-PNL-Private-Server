@@ -387,6 +387,20 @@ fn common_active_modifiers_change_only_their_declared_buckets() {
             ("magic", "targets", &Expiry::Turn, 2)
         );
     }
+    let broken_critical = rule_for(91001974, "active", "skill", 12003301)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            broken_critical.operation.as_str(),
+            broken_critical.summary,
+            broken_critical.target.as_str(),
+            &broken_critical.expiry,
+            broken_critical.duration,
+            broken_critical.target_broken,
+        ),
+        ("summary", 17, "targets", &Expiry::Attacked, 2, true)
+    );
     for (effect_id, skill_id, duration) in [
         (780046019, 20007532, 3),
         (780042011, 22002049, 10),
