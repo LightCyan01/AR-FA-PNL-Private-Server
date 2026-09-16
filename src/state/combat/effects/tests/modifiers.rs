@@ -361,6 +361,20 @@ fn attribute_resistance_down_affects_only_matching_damage() {
 
 #[test]
 fn common_active_modifiers_change_only_their_declared_buckets() {
+    for skill_id in [12001414, 12003316] {
+        let rule = rule_for(91001314, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                rule.operation.as_str(),
+                rule.target.as_str(),
+                &rule.expiry,
+                rule.duration,
+            ),
+            ("magic", "targets", &Expiry::Turn, 2)
+        );
+    }
     for (effect_id, skill_id, duration) in [
         (780046019, 20007532, 3),
         (780042011, 22002049, 10),
