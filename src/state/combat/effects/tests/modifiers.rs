@@ -360,6 +360,18 @@ fn attribute_resistance_down_affects_only_matching_damage() {
 
 #[test]
 fn common_active_modifiers_change_only_their_declared_buckets() {
+    for (effect_id, skill_id, duration) in [
+        (780046019, 20007532, 3),
+        (780042011, 22002049, 10),
+    ] {
+        let rule = rule_for(effect_id, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (rule.operation.as_str(), rule.summary, &rule.expiry, rule.duration),
+            ("summary", 11, &Expiry::Attacked, duration)
+        );
+    }
     let received_healing = rule_for(780132010, "active", "skill", 32003897)
         .unwrap()
         .unwrap();
