@@ -728,6 +728,11 @@ fn skill_form_effect_replaces_the_selected_skill_without_flagging_metadata() {
         .unwrap()
         .effects
         .clone();
+    let form_result = rule_for(91001670, "active", "skill", 11002490)
+        .unwrap()
+        .unwrap();
+    assert_eq!(form_result.operation, "skill_form");
+    assert_eq!(form_result.fixed, None);
     let fresh = load_fresh_rules().unwrap();
     let opened = reduce_talk_event(
         &proto,
