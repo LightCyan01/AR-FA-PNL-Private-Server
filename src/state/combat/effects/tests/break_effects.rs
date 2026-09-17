@@ -1,5 +1,22 @@
+use super::super::*;
 use crate::state::combat::prelude::*;
 use std::path::Path;
+
+#[test]
+fn break_zero_rules_preserve_the_weak_requirement() {
+    for (effect_id, skill_id, weak_only) in [
+        (91001058, 11003892, false),
+        (91001187, 14001764, true),
+    ] {
+        let rule = rule_for(effect_id, "instant", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (rule.operation.as_str(), rule.target.as_str(), rule.weak_only),
+            ("break_gauge_zero", "targets", weak_only)
+        );
+    }
+}
 
 #[test]
 fn weak_break_zero_uses_the_normal_break_path() {
