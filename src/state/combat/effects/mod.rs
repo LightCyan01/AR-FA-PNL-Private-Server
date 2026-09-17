@@ -27,7 +27,8 @@ mod tests;
 #[cfg(test)]
 pub(crate) use policy::incoming_multiplier_with_runtime;
 pub(crate) use policy::{
-    healing_amount, incoming_multiplier_for_skill, penetration_factor, secondary_damage,
+    healing_amount, incoming_multiplier_for_skill, penetration_factor,
+    receives_guaranteed_critical, secondary_damage,
 };
 pub(crate) use registry::{
     registry, rule_for, rule_for_occurrence, validate, Expiry, NestedActionKind,

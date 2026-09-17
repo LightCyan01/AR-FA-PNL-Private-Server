@@ -4,6 +4,12 @@ use super::runtime_summary::instant_summary_for_source;
 use crate::state::combat::prelude::*;
 
 // Shared damage/healing policies consume the runtime's derived summaries.
+pub(crate) fn receives_guaranteed_critical(target: &DynamicMessage) -> bool {
+    message_list(target, "state_changes")
+        .iter()
+        .any(|change| i32_field(change, "state_change_id") == Some(610052))
+}
+
 fn healing_bonus(member: &DynamicMessage, operation: &str) -> Result<i64, StateError> {
     let rules = &registry()?.rules;
     message_list(member, "state_changes")

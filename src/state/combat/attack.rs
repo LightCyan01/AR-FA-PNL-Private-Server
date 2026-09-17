@@ -218,6 +218,7 @@ pub(crate) fn apply_attack_results(
         }
         let critical = !is_tool
             && (guaranteed_critical
+                || effects::receives_guaranteed_critical(&members[target_index])
                 || (actor_type == 0
                     && deterministic_roll(
                         secret,

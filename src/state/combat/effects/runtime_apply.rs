@@ -1,5 +1,5 @@
 use super::policy::healing_amount;
-use super::registry::{registry, rule_for, Rule};
+use super::registry::{registry, rule_for, Expiry, Rule};
 use super::runtime::{Instance, Runtime};
 use super::runtime_form::apply_skill_form;
 use super::runtime_lamp::{is_lamp_mechanic, lamp_condition_matches};
@@ -762,6 +762,34 @@ impl Runtime {
                             "state_changes",
                             Value::List(changes.into_iter().map(Value::Message).collect()),
                         );
+                        if !matches!(rule.state_id, 940006 | 940007) {
+                            self.instances.retain(|instance| {
+                                instance.target != target_id
+                                    || instance.rule.operation != "status"
+                                    || instance.rule.state_id != rule.state_id
+                            });
+                            if rule.expiry == Expiry::Attacked {
+                                self.instances.push(Instance {
+                                    source: source_id,
+                                    source_character_id: message_i32_field(
+                                        &source,
+                                        "ally",
+                                        "character_id",
+                                    )
+                                    .unwrap_or_default(),
+                                    target: target_id,
+                                    value,
+                                    remaining: rule.duration,
+                                    rule: rule.clone(),
+                                });
+                                self.managed
+                                    .entry(target_id)
+                                    .or_default()
+                                    .insert(rule.state_id);
+                            } else if let Some(managed) = self.managed.get_mut(&target_id) {
+                                managed.remove(&rule.state_id);
+                            }
+                        }
                         if rule.state_id == 910059 {
                             members[target_index].set_field_by_name("is_stun", Value::Bool(true));
                         }

@@ -1,6 +1,7 @@
 mod caps;
 mod break_effects;
 mod cover;
+mod critical_status;
 mod legacy_modifiers;
 mod lifetimes;
 mod maintenance;
