@@ -149,7 +149,7 @@ fn offensive_panel_policy_matches_master_data() {
 }
 
 #[test]
-fn enhancement_panel_potency_scales_two_panel_uses_without_stacking() {
+fn enhancement_panel_potency_supports_timed_and_passive_sources() {
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../schemas/atelier-resleriana-2.16.0.protoset"
@@ -222,6 +222,19 @@ fn enhancement_panel_potency_scales_two_panel_uses_without_stacking() {
         .iter()
         .any(|instance| { instance.rule.operation == "panel_potency" }));
     assert_eq!(runtime.panel_multiplier(&state).unwrap(), (140, 100));
+    let passive_rule = rule_for(72001045, "passive", "ability", 1990197)
+        .unwrap()
+        .unwrap()
+        .clone();
+    runtime.passives.push(Passive {
+        source: actor_id,
+        value: 3_000,
+        rule: passive_rule,
+        source_character_id: 0,
+        source_type: 0,
+    });
+    assert_eq!(runtime.panel_multiplier(&state).unwrap(), (152, 100));
+    runtime.passives.clear();
 
     runtime
         .apply(
