@@ -72,6 +72,14 @@ pub(crate) struct Runtime {
 }
 
 impl Runtime {
+    pub(crate) fn initiative_members(&self) -> BTreeSet<i32> {
+        self.passives
+            .iter()
+            .filter(|passive| passive.rule.operation == "initiative")
+            .map(|passive| passive.source)
+            .collect()
+    }
+
     pub(crate) fn damage_immunity(&self, member_id: i32, attribute: i32) -> bool {
         self.instances.iter().any(|instance| {
             instance.target == member_id

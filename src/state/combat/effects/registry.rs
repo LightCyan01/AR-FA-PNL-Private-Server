@@ -354,6 +354,7 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                         | "action_reroll"
                         | "target_rate"
                         | "cover"
+                        | "initiative"
                         | "timeline_shift"
                         | "healing"
                         | "healing_received"

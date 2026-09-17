@@ -89,6 +89,7 @@ pub(crate) fn tutorial_timeline_units(
     battle_id: i32,
     wave: i32,
     members: &[DynamicMessage],
+    initiative_members: &BTreeSet<i32>,
 ) -> Result<Vec<DynamicMessage>, StateError> {
     let rows: &[(i32, i32, i32)] = match (battle_id, wave) {
         (10000279, 1) => &[
@@ -165,11 +166,62 @@ pub(crate) fn tutorial_timeline_units(
             (11, 2, 740),
             (13, 2, 760),
         ],
-        _ => return quest::initial_timeline(proto, rules, members),
+        _ => {
+            let mut units = quest::initial_timeline(proto, rules, members)?;
+            prioritize_initiative(&mut units, members, initiative_members)?;
+            return Ok(units);
+        }
     };
-    rows.iter()
+    let mut units = rows
+        .iter()
         .map(|(member_id, number, wait)| build_timeline_unit(proto, *member_id, *number, *wait))
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    prioritize_initiative(&mut units, members, initiative_members)?;
+    Ok(units)
+}
+
+fn prioritize_initiative(
+    units: &mut [DynamicMessage],
+    members: &[DynamicMessage],
+    initiative_members: &BTreeSet<i32>,
+) -> Result<(), StateError> {
+    if initiative_members.is_empty() {
+        return Ok(());
+    }
+    let mut initiative_max = None;
+    let mut other_min = None;
+    for unit in units
+        .iter()
+        .filter(|unit| i32_field(unit, "number") == Some(1))
+    {
+        let id = member_id(unit)?;
+        let wait = i32_field(unit, "wait").ok_or(StateError::InvalidRequest)?;
+        if initiative_members.contains(&id) {
+            initiative_max = Some(initiative_max.map_or(wait, |value: i32| value.max(wait)));
+        } else {
+            other_min = Some(other_min.map_or(wait, |value: i32| value.min(wait)));
+        }
+    }
+    let (Some(initiative_max), Some(other_min)) = (initiative_max, other_min) else {
+        return Ok(());
+    };
+    if initiative_max < other_min {
+        return Ok(());
+    }
+    let delay = initiative_max
+        .checked_add(1)
+        .and_then(|value| value.checked_sub(other_min))
+        .ok_or(StateError::InvalidRequest)?;
+    for unit in units.iter_mut() {
+        if !initiative_members.contains(&member_id(unit)?) {
+            let wait = i32_field(unit, "wait")
+                .and_then(|value| value.checked_add(delay))
+                .ok_or(StateError::InvalidRequest)?;
+            unit.set_field_by_name("wait", Value::I32(wait));
+        }
+    }
+    sort_timeline_units(units, members);
+    Ok(())
 }
 
 pub(crate) fn member_offense_and_defense(

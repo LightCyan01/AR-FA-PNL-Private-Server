@@ -2,6 +2,7 @@ mod caps;
 mod break_effects;
 mod cover;
 mod critical_status;
+mod initiative;
 mod legacy_modifiers;
 mod lifetimes;
 mod maintenance;

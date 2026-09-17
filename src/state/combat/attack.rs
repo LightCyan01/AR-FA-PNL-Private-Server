@@ -1369,7 +1369,13 @@ pub(crate) fn reduce_battle_attack_with_effects(
                 let next_wave_id = wave_ids[usize::try_from(next_wave_number - 1).unwrap_or(0)];
                 let wave_rule = rule_wave(rules, next_wave_id)?;
                 state.set_field_by_name("wave", Value::I32(next_wave_number));
-                append_wave_members(proto, rules, &mut state, wave_rule)?;
+                append_wave_members(
+                    proto,
+                    rules,
+                    &mut state,
+                    wave_rule,
+                    &effect_runtime.initiative_members(),
+                )?;
                 set_battle_field_effect(proto, &mut state, wave_rule.field_effect_id)?;
                 let battle_id = i32_field(&state, "battle_id").unwrap_or_default();
                 let panel_ids = tutorial_timeline_panels(rules, battle_id, next_wave_number)?;

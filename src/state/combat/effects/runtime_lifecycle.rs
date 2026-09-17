@@ -376,7 +376,8 @@ impl Runtime {
                     | "positive_immunity" | "negative_potency" | "positive_potency"
                     | "given_negative_potency" | "given_positive_potency"
                     | "damage_immunity" | "cover" | "cleanse_positive"
-                    | "evasion" | "abnormal_resistance" | "target_rate" | "status" => (), // read by combat policy
+                    | "evasion" | "abnormal_resistance" | "target_rate" | "status"
+                    | "initiative" => (), // read at use sites
                     _ => return Err(StateError::InvalidRequest),
                 }
                 Ok(())

@@ -769,6 +769,7 @@ pub(crate) fn append_wave_members(
     rules: &TutorialRules,
     state: &mut DynamicMessage,
     wave: &TutorialWave,
+    initiative_members: &BTreeSet<i32>,
 ) -> Result<(), StateError> {
     let mut members: Vec<_> = message_list(state, "members")
         .into_iter()
@@ -796,7 +797,14 @@ pub(crate) fn append_wave_members(
     }
     let battle_id = i32_field(state, "battle_id").ok_or(StateError::InvalidRequest)?;
     let wave_number = i32_field(state, "wave").ok_or(StateError::InvalidRequest)?;
-    let units = tutorial_timeline_units(proto, rules, battle_id, wave_number, &members)?;
+    let units = tutorial_timeline_units(
+        proto,
+        rules,
+        battle_id,
+        wave_number,
+        &members,
+        initiative_members,
+    )?;
     state.set_field_by_name(
         "members",
         Value::List(members.into_iter().map(Value::Message).collect()),

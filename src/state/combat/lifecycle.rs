@@ -577,7 +577,14 @@ pub(crate) fn build_battle_start(
         &external_passives,
     )?;
     let member_messages = message_list(&state, "members");
-    let timeline_values = tutorial_timeline_units(proto, rules, battle_id, 1, &member_messages)?;
+    let timeline_values = tutorial_timeline_units(
+        proto,
+        rules,
+        battle_id,
+        1,
+        &member_messages,
+        &effects.initiative_members(),
+    )?;
     state.set_field_by_name(
         "timeline_units",
         Value::List(timeline_values.into_iter().map(Value::Message).collect()),
