@@ -7,6 +7,7 @@ use super::runtime_match::{
     amount, condition, contextual_recipient, selected, state_application_blocked,
 };
 use super::runtime_results::{display, effect_result, status_display, status_effect_result};
+use super::runtime_resources::add_burst_gauge;
 use super::runtime_targeting::resolved_targets;
 use crate::state::combat::prelude::*;
 use std::collections::BTreeSet;
@@ -447,32 +448,17 @@ impl Runtime {
                         continue;
                     }
                     let target_id = member_id(&members[target_index])?;
-                    let mut gauge = member_status(&members[target_index], "burst_gauge")?;
-                    let maximum = i32_field(&gauge, "max_gauge")
+                    let required = rules
                         .ok_or(StateError::InvalidRequest)?
-                        .max(0);
-                    let current = i32_field(&gauge, "current_gauge")
-                        .unwrap_or_default()
-                        .max(0);
-                    let delta = value.saturating_div(100);
-                    let next = current.saturating_add(delta).clamp(0, maximum);
-                    gauge.set_field_by_name("current_gauge", Value::I32(next));
-                    gauge.set_field_by_name(
-                        "is_enable",
-                        Value::Bool(
-                            next >= rules
-                                .ok_or(StateError::InvalidRequest)?
-                                .constants
-                                .burst_gauge_required_for_one_burst_skill,
-                        ),
-                    );
-                    members[target_index].set_field_by_name("burst_gauge", Value::Message(gauge));
+                        .constants
+                        .burst_gauge_required_for_one_burst_skill;
+                    let delta = add_burst_gauge(&mut members[target_index], value, required)?;
                     let mut result = effect_result(
                         proto, effect.id, source_id, target_id, is_skill, rule, value,
                     )?;
                     result.set_field_by_name(
                         "add_burst_gauge",
-                        Value::Message(wrapper_i32(proto, next - current)?),
+                        Value::Message(wrapper_i32(proto, delta)?),
                     );
                     results.push(result);
                 }

@@ -17,6 +17,7 @@ mod runtime_nested;
 mod runtime_panel;
 mod runtime_potency;
 mod runtime_results;
+mod runtime_resources;
 mod runtime_scaling;
 mod runtime_summary;
 mod runtime_targeting;

@@ -117,7 +117,7 @@ fn effect_healing_uses_max_hp_and_protocol_target_scope() {
 }
 
 #[test]
-fn triggered_ability_heals_bind_by_catalog_slot() {
+fn triggered_ability_resources_bind_by_catalog_slot() {
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../schemas/atelier-resleriana-2.16.0.protoset"
@@ -142,6 +142,11 @@ fn triggered_ability_heals_bind_by_catalog_slot() {
         .unwrap();
     let source = member_id(&source_member).unwrap();
     let character_id = message_i32_field(&source_member, "ally", "character_id").unwrap();
+    let burst_before = i32_field(
+        &member_status(&source_member, "burst_gauge").unwrap(),
+        "current_gauge",
+    )
+    .unwrap();
     let party = [BattlePartyMember {
         character_id,
         level: 1,
@@ -209,6 +214,15 @@ fn triggered_ability_heals_bind_by_catalog_slot() {
                 value: 100,
             },
         ),
+        (
+            None,
+            4991248,
+            Some(2),
+            TutorialSkillEffect {
+                id: 95000351,
+                value: 1_000,
+            },
+        ),
     ];
     let lower_hp = |state: &mut DynamicMessage| {
         let mut members = message_list(state, "members");
@@ -238,6 +252,17 @@ fn triggered_ability_heals_bind_by_catalog_slot() {
         .iter()
         .filter(|member| member_type(member).ok() == Some(0))
         .all(|member| i32_field(member, "hp") == i32_field(member, "max_hp")));
+    let source_member = message_list(&state, "members")
+        .into_iter()
+        .find(|member| member_id(member).ok() == Some(source))
+        .unwrap();
+    assert_eq!(
+        i32_field(
+            &member_status(&source_member, "burst_gauge").unwrap(),
+            "current_gauge",
+        ),
+        Some(burst_before + 10)
+    );
 
     lower_hp(&mut state);
     let skill = rules

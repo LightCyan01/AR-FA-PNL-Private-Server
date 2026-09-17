@@ -2,6 +2,7 @@ use super::registry::{registry, rule_for_occurrence, Expiry, Rule};
 use super::runtime::{Baseline, Instance, NestedActionInstance, Passive, Runtime};
 use super::runtime_lamp::is_lamp_ability_effect;
 use super::runtime_match::{amount, condition, contextual_rule, selected_for_source_character};
+use super::runtime_resources::add_burst_gauge;
 use super::runtime_results::display;
 use crate::state::combat::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
@@ -164,6 +165,7 @@ impl Runtime {
         }
         runtime.initialize_skill_lamps(proto, state)?;
         let mut start_gain = 0i64;
+        let mut start_burst = BTreeMap::<i32, i32>::new();
         for passive in runtime
             .passives
             .iter()
@@ -173,6 +175,12 @@ impl Runtime {
                 "bomb_gauge" => {
                     start_gain = start_gain
                         .checked_add(i64::from(passive.value))
+                        .ok_or(StateError::InvalidRequest)?;
+                }
+                "burst_gauge" => {
+                    let value = start_burst.entry(passive.source).or_default();
+                    *value = value
+                        .checked_add(passive.value)
                         .ok_or(StateError::InvalidRequest)?;
                 }
                 "heal" => {
@@ -198,6 +206,24 @@ impl Runtime {
                         .saturating_add(delta)
                         .clamp(0, i64::from(maximum)) as i32,
                 ),
+            );
+        }
+        if !start_burst.is_empty() {
+            let mut members = message_list(state, "members");
+            for (source, value) in start_burst {
+                let member = members
+                    .iter_mut()
+                    .find(|member| member_id(member).ok() == Some(source))
+                    .ok_or(StateError::InvalidRequest)?;
+                add_burst_gauge(
+                    member,
+                    value,
+                    rules.constants.burst_gauge_required_for_one_burst_skill,
+                )?;
+            }
+            state.set_field_by_name(
+                "members",
+                Value::List(members.into_iter().map(Value::Message).collect()),
             );
         }
         runtime.refresh(proto, state)?;
