@@ -3,6 +3,56 @@ use crate::state::combat::prelude::*;
 use std::path::Path;
 
 #[test]
+fn attribute_or_tag_support_buffs_apply_each_modifier_once() {
+    let rule = |effect_id, skill_id| {
+        rule_for(effect_id, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap()
+    };
+    let fire_magic = rule(91001679, 11002506);
+    let fire_damage = rule(91001680, 11002506);
+    let tag_magic = rule(91001683, 11002506);
+    let tag_damage = rule(91001684, 11002506);
+    assert_eq!(fire_magic.operation, "magic");
+    assert_eq!(
+        (fire_damage.operation.as_str(), fire_damage.summary),
+        ("summary", 1)
+    );
+    assert_eq!(
+        fire_magic.target_character_ids,
+        fire_damage.target_character_ids
+    );
+    assert_eq!(tag_magic.target_character_ids, tag_damage.target_character_ids);
+    assert_eq!(tag_magic.target_character_ids, [50201, 50301, 50501]);
+    assert!(fire_magic
+        .target_character_ids
+        .iter()
+        .all(|id| !tag_magic.target_character_ids.contains(id)));
+
+    let impact_defense = rule(91001675, 11002700);
+    let impact_mental = rule(91001676, 11002700);
+    let tag_defense = rule(91001677, 11002700);
+    let tag_mental = rule(91001678, 11002700);
+    assert_eq!(
+        (
+            impact_defense.operation.as_str(),
+            impact_mental.operation.as_str(),
+        ),
+        ("defense", "mental")
+    );
+    assert_eq!(
+        impact_defense.target_character_ids,
+        impact_mental.target_character_ids
+    );
+    assert_eq!(tag_defense.target_character_ids, tag_mental.target_character_ids);
+    assert_eq!(tag_defense.target_character_ids, [50101, 50401, 50601]);
+    assert!(impact_defense
+        .target_character_ids
+        .iter()
+        .all(|id| !tag_defense.target_character_ids.contains(id)));
+}
+
+#[test]
 fn common_support_effects_keep_their_scope_and_conditions() {
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
