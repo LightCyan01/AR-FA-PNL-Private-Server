@@ -9,6 +9,7 @@ mod registry;
 mod runtime;
 mod runtime_apply;
 mod runtime_cover;
+mod runtime_critical;
 mod runtime_form;
 mod runtime_lamp;
 mod runtime_lifecycle;

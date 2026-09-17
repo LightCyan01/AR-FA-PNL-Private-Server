@@ -461,6 +461,9 @@ impl Runtime {
                 )?);
             }
         }
+        triggered.extend(self.apply_critical_skill_effects(
+            proto, rules, state, source_id, skill, results,
+        )?);
         self.refresh(proto, state)?;
         Ok(triggered)
     }

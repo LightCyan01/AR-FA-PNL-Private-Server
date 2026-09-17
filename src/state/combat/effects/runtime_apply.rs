@@ -106,6 +106,7 @@ impl Runtime {
             panel_context,
             application_rate,
             Some((secret, start_txid, action_number)),
+            false,
         )
     }
 
@@ -137,11 +138,12 @@ impl Runtime {
             panel_context,
             application_rate,
             rng,
+            false,
         )
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn apply_inner_with_rules(
+    pub(super) fn apply_inner_with_rules(
         &mut self,
         proto: &ProtoRegistry,
         rules: Option<&TutorialRules>,
@@ -155,6 +157,7 @@ impl Runtime {
         panel_context: Option<&DynamicMessage>,
         application_rate: i32,
         rng: Option<(&[u8], &str, i32)>,
+        critical_trigger: bool,
     ) -> Result<Vec<DynamicMessage>, StateError> {
         let mut members = message_list(state, "members");
         let condition_members = panel_context.map(|context| message_list(context, "members"));
@@ -176,7 +179,7 @@ impl Runtime {
                     && rule.owner_id == skill_id
                     && rule.effect_id == effect.id
             });
-            if phase == "after" && has_nested_rule {
+            if phase == "after" && has_nested_rule && !critical_trigger {
                 let (secret, transaction, action_number) = rng.ok_or(StateError::InvalidRequest)?;
                 results.extend(self.apply_nested_grants(
                     proto,
@@ -221,6 +224,9 @@ impl Runtime {
             {
                 effective_rule.phase.clone_from(phase);
             }
+            if critical_trigger {
+                effective_rule.critical_only = false;
+            }
             let mut extra_rules = Vec::new();
             if let Some(variants) = registry()?
                 .rule_variants_by_skill
@@ -241,6 +247,7 @@ impl Runtime {
             }
             let rule = &effective_rule;
             if rule.phase != phase
+                || (rule.critical_only && !critical_trigger)
                 || !condition(rule, &source)
                 || !lamp_condition_matches(&source, skill_id, rule)?
             {

@@ -3,6 +3,7 @@ mod break_effects;
 mod compound_defense;
 mod cover;
 mod critical_status;
+mod critical_triggers;
 mod initiative;
 mod legacy_modifiers;
 mod lifetimes;
