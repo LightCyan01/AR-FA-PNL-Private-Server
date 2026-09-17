@@ -28,6 +28,8 @@ fn skill_damage_curves_follow_live_count_hp_and_direction() {
         (91001211, 14001077),
         (91001633, 14002426),
         (91002166, 11003617),
+        (91001470, 12002064),
+        (91001470, 14002069),
     ] {
         assert_eq!(
             rule_for(effect_id, "catalog", "skill", skill_id)
@@ -77,6 +79,14 @@ fn skill_damage_curves_follow_live_count_hp_and_direction() {
     assert_eq!(
         scaled_skill_damage(skill(14002426), &source, 1).unwrap(),
         5_000
+    );
+    assert_eq!(
+        scaled_skill_damage(skill(12002064), &source, 1).unwrap(),
+        600
+    );
+    assert_eq!(
+        scaled_skill_damage(skill(14002069), &source, 1).unwrap(),
+        1_200
     );
     assert_eq!(
         instant_summary(skill(14002551), &source, false, 1).unwrap(),
@@ -138,6 +148,14 @@ fn skill_damage_curves_follow_live_count_hp_and_direction() {
     assert_eq!(
         scaled_break_damage(skill(11003617), &source).unwrap(),
         4_000
+    );
+    assert_eq!(
+        scaled_skill_damage(skill(12002064), &source, 1).unwrap(),
+        6_000
+    );
+    assert_eq!(
+        scaled_skill_damage(skill(14002069), &source, 1).unwrap(),
+        12_000
     );
 }
 
