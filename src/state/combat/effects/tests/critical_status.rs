@@ -16,6 +16,8 @@ fn kachikochi_uses_master_rate_lifetime_and_critical_policy() {
         (22000470, 5_000),
         (28000059, 5_000),
         (20008965, 10_000),
+        (11003556, 10_000),
+        (12000771, 10_000),
     ] {
         assert_eq!(
             gameplay
@@ -45,6 +47,35 @@ fn kachikochi_uses_master_rate_lifetime_and_critical_policy() {
                 rule.duration,
             ),
             ("status", target, 610052, &expiry, duration)
+        );
+    }
+    for (effect_id, skill_id, phase, duration) in [
+        (91001099, 11003556, "after", 2),
+        (91001099, 12000771, "before", 2),
+        (91001100, 14000776, "after", 2),
+        (91001970, 14003331, "after", 3),
+        (91001971, 14003336, "after", 3),
+    ] {
+        let rule = rule_for(effect_id, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                rule.operation.as_str(),
+                rule.target.as_str(),
+                rule.phase.as_str(),
+                rule.state_id,
+                &rule.expiry,
+                rule.duration,
+            ),
+            (
+                "status",
+                "targets",
+                phase,
+                610052,
+                &Expiry::Attacked,
+                duration,
+            )
         );
     }
 
