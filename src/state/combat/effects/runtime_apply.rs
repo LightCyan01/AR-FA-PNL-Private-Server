@@ -9,7 +9,7 @@ use super::runtime_match::{
 };
 use super::runtime_results::{display, effect_result, status_display, status_effect_result};
 use super::runtime_resources::{add_burst_gauge, add_party_gauge};
-use super::runtime_scaling::scaled_effect_value;
+use super::runtime_scaling::{party_tag_count, scaled_effect_value};
 use super::runtime_targeting::resolved_targets;
 use crate::state::combat::prelude::*;
 use std::collections::BTreeSet;
@@ -394,22 +394,32 @@ impl Runtime {
             }
             let mut value = amount(rule, effect.value)?;
             if !rule.scale_by.is_empty() {
-                let opponent_count = if rule.scale_by == "opponent_count" {
-                    let source_type = member_type(&source)?;
-                    i32::try_from(
-                        members
-                            .iter()
-                            .filter(|member| {
-                                bool_field(member, "is_alive")
-                                    && member_type(member).ok() != Some(source_type)
-                            })
-                            .count(),
-                    )
-                    .map_err(|_| StateError::InvalidRequest)?
-                } else {
-                    0
+                let scale_count = match rule.scale_by.as_str() {
+                    "opponent_count" => {
+                        let source_type = member_type(&source)?;
+                        i32::try_from(
+                            members
+                                .iter()
+                                .filter(|member| {
+                                    bool_field(member, "is_alive")
+                                        && member_type(member).ok() != Some(source_type)
+                                })
+                                .count(),
+                        )
+                        .map_err(|_| StateError::InvalidRequest)?
+                    }
+                    "party_tag_count" => party_tag_count(
+                        rules.ok_or(StateError::InvalidRequest)?,
+                        &members,
+                        &source,
+                        *rule
+                            .condition
+                            .get("party_tag_id")
+                            .ok_or(StateError::InvalidRequest)?,
+                    )?,
+                    _ => 0,
                 };
-                value = scaled_effect_value(rule, &source, opponent_count, value)?;
+                value = scaled_effect_value(rule, &source, scale_count, value)?;
             }
             if rule.operation == "timeline_shift" {
                 for target in members.iter().filter(|member| {

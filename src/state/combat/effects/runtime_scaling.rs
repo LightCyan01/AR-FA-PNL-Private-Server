@@ -16,14 +16,35 @@ pub(crate) fn scaled_break_damage(
     scaled_skill_modifier(skill, source, 0, 3)
 }
 
+pub(super) fn party_tag_count(
+    rules: &TutorialRules,
+    members: &[DynamicMessage],
+    source: &DynamicMessage,
+    tag_id: i32,
+) -> Result<i32, StateError> {
+    let source_type = member_type(source)?;
+    i32::try_from(
+        members
+            .iter()
+            .filter(|member| {
+                member_type(member).ok() == Some(source_type)
+                    && message_i32_field(member, "ally", "character_id")
+                        .and_then(|id| rule_character(rules, id).ok())
+                        .is_some_and(|character| character.tag_ids.contains(&tag_id))
+            })
+            .count(),
+    )
+    .map_err(|_| StateError::InvalidRequest)
+}
+
 pub(super) fn scaled_effect_value(
     rule: &Rule,
     source: &DynamicMessage,
-    opponent_count: i32,
+    scale_count: i32,
     minimum_output: i32,
 ) -> Result<i32, StateError> {
     let (input, denominator) = match rule.scale_by.as_str() {
-        "opponent_count" => (i64::from(opponent_count), 1),
+        "opponent_count" | "party_tag_count" => (i64::from(scale_count), 1),
         "source_hp" => (
             i64::from(i32_field(source, "hp").unwrap_or_default().max(0)) * 100,
             i64::from(i32_field(source, "max_hp").unwrap_or(1).max(1)),

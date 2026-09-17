@@ -425,15 +425,31 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                 || (r.operation == "summary"
                     && !r.scale_by.is_empty()
                     && (r.mode != "active"
-                        || r.scale_by != "opponent_count"
+                        || !matches!(r.scale_by.as_str(), "opponent_count" | "party_tag_count")
                         || r.fixed.is_none()
                         || r.scale_input_min < 0
                         || r.scale_input_max <= r.scale_input_min
-                        || r.scale_output_max <= r.fixed.unwrap_or_default()))
+                        || r.scale_output_max <= r.fixed.unwrap_or_default()
+                        || (r.scale_by == "party_tag_count"
+                            && (r.scale_input_min == 0
+                                || r.condition
+                                    .get("party_tag_id")
+                                    .is_none_or(|id| *id <= 0)))))
+                || (r.operation == "attribute_taken"
+                    && !r.scale_by.is_empty()
+                    && (r.mode != "active"
+                        || r.scale_by != "party_tag_count"
+                        || r.fixed.is_none()
+                        || r.scale_input_min <= 0
+                        || r.scale_input_max <= r.scale_input_min
+                        || r.scale_output_max <= r.fixed.unwrap_or_default()
+                        || r.condition
+                            .get("party_tag_id")
+                            .is_none_or(|id| *id <= 0)))
                 || (!r.scale_by.is_empty()
                     && !matches!(
                         r.operation.as_str(),
-                        "skill_damage_scale" | "heal" | "summary"
+                        "skill_damage_scale" | "heal" | "summary" | "attribute_taken"
                     ))
                 || r.stack_cap < 0
                 || r.source_side_count_min < 0

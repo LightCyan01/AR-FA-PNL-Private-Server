@@ -211,3 +211,111 @@ fn granted_buffs_scale_with_live_opponent_count() {
         );
     }
 }
+
+#[test]
+fn received_damage_buffs_scale_with_tagged_party_members() {
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let rules = load_gameplay_rules().unwrap();
+    let skill_ids = (12002406..=12002410).chain(12002571..=12002575);
+    for (effect_id, operation, summary, attribute, state_id) in [
+        (91001687, "attribute_taken", 0, Some(5), 50006),
+        (91001688, "attribute_taken", 0, Some(2), 50011),
+        (91001689, "summary", 13, None, 510306),
+    ] {
+        for skill_id in skill_ids.clone() {
+            let rule = rule_for(effect_id, "active", "skill", skill_id)
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                (
+                    rule.operation.as_str(),
+                    rule.summary,
+                    rule.target.as_str(),
+                    rule.state_id,
+                    &rule.expiry,
+                    rule.duration,
+                    rule.fixed,
+                    rule.scale_by.as_str(),
+                    rule.scale_input_min,
+                    rule.scale_input_max,
+                    rule.scale_output_max,
+                    rule.positive,
+                ),
+                (
+                    operation,
+                    summary,
+                    "targets",
+                    state_id,
+                    &Expiry::Attacked,
+                    2,
+                    Some(500),
+                    "party_tag_count",
+                    1,
+                    5,
+                    2_500,
+                    false,
+                )
+            );
+            assert_eq!(rule.attack_attributes.first().copied(), attribute);
+        }
+    }
+
+    let rule = rule_for(91001687, "active", "skill", 12002406)
+        .unwrap()
+        .unwrap();
+    let tag_id = rule.condition["party_tag_id"];
+    let tagged = rules
+        .battle_characters
+        .iter()
+        .filter(|character| character.tag_ids.contains(&tag_id))
+        .map(|character| character.id)
+        .collect::<Vec<_>>();
+    let untagged = rules
+        .battle_characters
+        .iter()
+        .find(|character| !character.tag_ids.contains(&tag_id))
+        .unwrap()
+        .id;
+    assert!(tagged.len() >= 6);
+    let member = |member_id, character_id, member_type| {
+        let mut ally = empty_message(&proto, "blend.model.BattleAlly").unwrap();
+        ally.set_field_by_name("character_id", Value::I32(character_id));
+        let mut member = empty_message(&proto, "blend.model.BattleMember").unwrap();
+        member.set_field_by_name("member_id", Value::I32(member_id));
+        member.set_field_by_name("type", Value::EnumNumber(member_type));
+        member.set_field_by_name("ally", Value::Message(ally));
+        member
+    };
+    for (count, expected) in [(1, 500), (5, 2_500)] {
+        let mut members = tagged
+            .iter()
+            .take(count)
+            .enumerate()
+            .map(|(index, character_id)| member(index as i32 + 1, *character_id, 0))
+            .collect::<Vec<_>>();
+        members.push(member(20, untagged, 0));
+        members.push(member(21, tagged[5], 1));
+        let actual = super::super::runtime_scaling::party_tag_count(
+            &rules,
+            &members,
+            &members[0],
+            tag_id,
+        )
+        .unwrap();
+        assert_eq!(actual, count as i32);
+        assert_eq!(
+            super::super::runtime_scaling::scaled_effect_value(
+                rule,
+                &members[0],
+                actual,
+                rule.fixed.unwrap(),
+            )
+            .unwrap(),
+            expected
+        );
+    }
+}

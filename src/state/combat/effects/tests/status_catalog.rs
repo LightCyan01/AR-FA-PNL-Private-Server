@@ -68,3 +68,24 @@ fn compound_resistance_effects_keep_each_attribute() {
         );
     }
 }
+
+#[test]
+fn received_attribute_damage_uses_the_target_multiplier() {
+    for (effect_id, attribute, state_id) in [
+        (91001658, 5, 50006),
+        (91001645, 2, 50011),
+    ] {
+        let rule = rule_for(effect_id, "active", "skill", 12002406)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                rule.operation.as_str(),
+                rule.attack_attributes.as_slice(),
+                rule.state_id,
+                rule.positive,
+            ),
+            ("attribute_taken", [attribute].as_slice(), state_id, false)
+        );
+    }
+}

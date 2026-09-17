@@ -6,9 +6,10 @@ pub(super) fn condition(rule: &Rule, source: &DynamicMessage) -> bool {
     let hp = i64::from(i32_field(source, "hp").unwrap_or(0));
     let maximum = i64::from(i32_field(source, "max_hp").unwrap_or(1).max(1));
     rule.condition.keys().all(|key| {
-        matches!(
-            key.as_str(),
-            "hp_min"
+        (key == "party_tag_id" && rule.scale_by == "party_tag_count")
+            || matches!(
+                key.as_str(),
+                "hp_min"
                 | "hp_max"
                 | "hp_below"
                 | "target_hp_min"
@@ -27,7 +28,7 @@ pub(super) fn condition(rule: &Rule, source: &DynamicMessage) -> bool {
                 | "opponent_negative"
                 | "opponent_abnormal"
                 | "skill_lamp_full"
-        )
+            )
     }) && rule
         .condition
         .get("hp_min")
