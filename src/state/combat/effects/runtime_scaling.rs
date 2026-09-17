@@ -1,4 +1,4 @@
-use super::registry::rule_for;
+use super::registry::{rule_for, Rule};
 use crate::state::combat::prelude::*;
 
 pub(crate) fn scaled_skill_damage(
@@ -14,6 +14,26 @@ pub(crate) fn scaled_break_damage(
     source: &DynamicMessage,
 ) -> Result<i64, StateError> {
     scaled_skill_modifier(skill, source, 0, 3)
+}
+
+pub(super) fn scaled_source_hp_value(
+    rule: &Rule,
+    source: &DynamicMessage,
+    minimum_output: i32,
+) -> Result<i32, StateError> {
+    let maximum_hp = i64::from(i32_field(source, "max_hp").unwrap_or(1).max(1));
+    let minimum = i64::from(rule.scale_input_min) * maximum_hp;
+    let span = i64::from(rule.scale_input_max - rule.scale_input_min) * maximum_hp;
+    let input = i64::from(i32_field(source, "hp").unwrap_or_default().max(0)) * 100;
+    let mut progress = input.clamp(minimum, minimum + span) - minimum;
+    if rule.scale_descending {
+        progress = span - progress;
+    }
+    i32::try_from(
+        i64::from(minimum_output)
+            + i64::from(rule.scale_output_max - minimum_output) * progress / span,
+    )
+    .map_err(|_| StateError::InvalidRequest)
 }
 
 fn scaled_skill_modifier(

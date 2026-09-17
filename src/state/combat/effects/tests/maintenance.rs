@@ -114,6 +114,44 @@ fn effect_healing_uses_max_hp_and_protocol_target_scope() {
         optional_i32_field(&result[0], "effect_target_id"),
         Some(target)
     );
+
+    let mut members = message_list(&state, "members");
+    let source_member = members
+        .iter_mut()
+        .find(|member| member_id(member).ok() == Some(source))
+        .unwrap();
+    let maximum = i32_field(source_member, "max_hp").unwrap();
+    let low_hp = maximum / 4;
+    source_member.set_field_by_name("hp", Value::I32(low_hp));
+    state.set_field_by_name(
+        "members",
+        Value::List(members.into_iter().map(Value::Message).collect()),
+    );
+    let result = runtime
+        .apply(
+            &proto,
+            &mut state,
+            source,
+            &[TutorialSkillEffect {
+                id: 91001027,
+                value: 3_000,
+            }],
+            &[enemy],
+            true,
+            "after",
+            None,
+        )
+        .unwrap();
+    let expected = maximum * 3 / 10;
+    assert_eq!(
+        message_i32_field(&result[0], "hp_heal", "value"),
+        Some(expected)
+    );
+    let source_member = message_list(&state, "members")
+        .into_iter()
+        .find(|member| member_id(member).ok() == Some(source))
+        .unwrap();
+    assert_eq!(i32_field(&source_member, "hp"), Some(low_hp + expected));
 }
 
 #[test]

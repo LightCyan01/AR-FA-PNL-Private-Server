@@ -8,6 +8,7 @@ use super::runtime_match::{
 };
 use super::runtime_results::{display, effect_result, status_display, status_effect_result};
 use super::runtime_resources::add_burst_gauge;
+use super::runtime_scaling::scaled_source_hp_value;
 use super::runtime_targeting::resolved_targets;
 use crate::state::combat::prelude::*;
 use std::collections::BTreeSet;
@@ -382,7 +383,10 @@ impl Runtime {
                 );
                 continue;
             }
-            let value = amount(rule, effect.value)?;
+            let mut value = amount(rule, effect.value)?;
+            if rule.operation == "heal" && rule.scale_by == "source_hp" {
+                value = scaled_source_hp_value(rule, &source, value)?;
+            }
             if rule.operation == "timeline_shift" {
                 for target in members.iter().filter(|member| {
                     bool_field(member, "is_alive") && selected(rule, &source, member, targets)
