@@ -374,6 +374,7 @@ impl Runtime {
                     | "healing" | "healing_received"
                     | "regeneration" | "negative_immunity" | "abnormal_immunity"
                     | "positive_immunity" | "negative_potency" | "positive_potency"
+                    | "given_negative_potency" | "given_positive_potency"
                     | "damage_immunity" | "cover" | "cleanse_positive"
                     | "evasion" | "abnormal_resistance" | "target_rate" | "status" => (), // read by combat policy
                     _ => return Err(StateError::InvalidRequest),

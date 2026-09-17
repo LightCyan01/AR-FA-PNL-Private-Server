@@ -371,6 +371,8 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                         | "negative_immunity"
                         | "negative_potency"
                         | "positive_potency"
+                        | "given_negative_potency"
+                        | "given_positive_potency"
                         | "damage_immunity"
                         | "abnormal_immunity"
                         | "positive_immunity"

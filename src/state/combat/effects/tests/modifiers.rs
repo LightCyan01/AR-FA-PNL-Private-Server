@@ -556,7 +556,7 @@ fn common_active_modifiers_change_only_their_declared_buckets() {
 }
 
 #[test]
-fn received_effect_potency_scales_matching_effects_and_expires() {
+fn effect_potency_scales_matching_sources_and_targets() {
     let negative_down = rule_for(71187001, "active", "skill", 22001609)
         .unwrap()
         .unwrap()
@@ -585,6 +585,42 @@ fn received_effect_potency_scales_matching_effects_and_expires() {
         ),
         ("positive_potency", "enemies", -1, 720016, 3)
     );
+    let given_positive = rule_for(95000334, "passive", "ability", 4991208)
+        .unwrap()
+        .unwrap()
+        .clone();
+    let given_negative = rule_for(95000335, "passive", "ability", 4991208)
+        .unwrap()
+        .unwrap()
+        .clone();
+    assert_eq!(
+        (
+            given_positive.operation.as_str(),
+            given_negative.operation.as_str(),
+        ),
+        ("given_positive_potency", "given_negative_potency")
+    );
+
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let member = |id, character_id| {
+        let mut ally = empty_message(&proto, "blend.model.BattleAlly").unwrap();
+        ally.set_field_by_name("character_id", Value::I32(character_id));
+        let mut member = empty_message(&proto, "blend.model.BattleMember").unwrap();
+        member.set_field_by_name("member_id", Value::I32(id));
+        member.set_field_by_name("type", Value::EnumNumber(0));
+        member.set_field_by_name("is_alive", Value::Bool(true));
+        member.set_field_by_name("ally", Value::Message(ally));
+        member
+    };
+    let members = vec![
+        member(1, 0),
+        member(2, 0),
+        member(3, given_positive.source_character_ids[0]),
+    ];
 
     let mut runtime = Runtime::default();
     runtime.instances.push(Instance {
@@ -598,7 +634,9 @@ fn received_effect_potency_scales_matching_effects_and_expires() {
     let negative_effect = rule_for(780107003, "active", "skill", 0).unwrap().unwrap();
     for expected in [1_000, 1_000, 2_000] {
         assert_eq!(
-            runtime.apply_potency(1, negative_effect, 2_000).unwrap(),
+            runtime
+                .apply_potency(&members, &members[1], 1, negative_effect, 2_000)
+                .unwrap(),
             expected
         );
     }
@@ -612,7 +650,9 @@ fn received_effect_potency_scales_matching_effects_and_expires() {
     });
     let positive_effect = rule_for(91001018, "active", "skill", 0).unwrap().unwrap();
     assert_eq!(
-        runtime.apply_potency(2, positive_effect, 1_000).unwrap(),
+        runtime
+            .apply_potency(&members, &members[0], 2, positive_effect, 1_000)
+            .unwrap(),
         700
     );
     assert_eq!(runtime.instances[0].remaining, 2);
@@ -631,9 +671,61 @@ fn received_effect_potency_scales_matching_effects_and_expires() {
     });
     assert_eq!(
         passive_runtime
-            .apply_potency(2, positive_effect, 1_000)
+            .apply_potency(&members, &members[0], 2, positive_effect, 1_000)
             .unwrap(),
         1_150
+    );
+
+    let mut giver_runtime = Runtime::default();
+    for (rule, value) in [(given_positive, 400), (given_negative, 500)] {
+        giver_runtime.passives.push(Passive {
+            source: 3,
+            value,
+            rule,
+            source_character_id: message_i32_field(&members[2], "ally", "character_id").unwrap(),
+            source_type: 0,
+        });
+    }
+    assert_eq!(
+        giver_runtime
+            .apply_potency(&members, &members[2], 2, positive_effect, 1_000)
+            .unwrap(),
+        1_040
+    );
+    assert_eq!(
+        giver_runtime
+            .apply_potency(&members, &members[2], 2, negative_effect, 1_000)
+            .unwrap(),
+        1_050
+    );
+    assert_eq!(
+        giver_runtime
+            .apply_potency(&members, &members[0], 2, positive_effect, 1_000)
+            .unwrap(),
+        1_000
+    );
+
+    let ally_given = rule_for(81256002, "passive", "ability", 21256001)
+        .unwrap()
+        .unwrap()
+        .clone();
+    assert_eq!(
+        (ally_given.operation.as_str(), ally_given.target.as_str()),
+        ("given_positive_potency", "allies")
+    );
+    let mut ally_runtime = Runtime::default();
+    ally_runtime.passives.push(Passive {
+        source: 1,
+        value: 1_000,
+        rule: ally_given,
+        source_character_id: 0,
+        source_type: 0,
+    });
+    assert_eq!(
+        ally_runtime
+            .apply_potency(&members, &members[1], 3, positive_effect, 1_000)
+            .unwrap(),
+        1_100
     );
 }
 
