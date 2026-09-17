@@ -156,6 +156,13 @@ fn triggered_ability_heals_bind_by_catalog_slot() {
         passives: Vec::new(),
         leader_passives: Vec::new(),
     }];
+    let attacker_character_id = registry()
+        .unwrap()
+        .rules
+        .iter()
+        .find(|rule| rule.id == 95000088 && rule.owner_id == 4990388)
+        .unwrap()
+        .source_character_ids[0];
     let external = [
         (
             None,
@@ -182,6 +189,24 @@ fn triggered_ability_heals_bind_by_catalog_slot() {
             TutorialSkillEffect {
                 id: 72001131,
                 value: 500,
+            },
+        ),
+        (
+            Some(attacker_character_id),
+            4990388,
+            Some(0),
+            TutorialSkillEffect {
+                id: 95000088,
+                value: 100,
+            },
+        ),
+        (
+            Some(attacker_character_id),
+            4990388,
+            Some(1),
+            TutorialSkillEffect {
+                id: 95000088,
+                value: 100,
             },
         ),
     ];
@@ -227,10 +252,15 @@ fn triggered_ability_heals_bind_by_catalog_slot() {
         .into_iter()
         .filter(|member| member_type(member).ok() == Some(0))
         .collect::<Vec<_>>();
-    assert_eq!(results.len(), allies.len());
+    assert_eq!(results.len(), allies.len() + 2);
     assert!(allies.iter().all(|member| {
         let maximum = i32_field(member, "max_hp").unwrap();
-        i32_field(member, "hp") == Some(maximum / 2 + maximum / 10)
+        let attack_heal = if member_id(member).unwrap() == source {
+            (maximum / 100) * 2
+        } else {
+            0
+        };
+        i32_field(member, "hp") == Some(maximum / 2 + maximum / 10 + attack_heal)
     }));
 
     lower_hp(&mut state);

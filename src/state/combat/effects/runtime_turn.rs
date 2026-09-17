@@ -1,6 +1,6 @@
 use super::registry::Expiry;
 use super::runtime::{Instance, Runtime};
-use super::runtime_lamp::heal_all;
+use super::runtime_lamp::{heal_all, heal_self};
 use super::runtime_match::{condition, context_matches, selected_for_source_character};
 use super::runtime_panel::scale_panel_value;
 use super::runtime_results::{effect_result, turn_state_change_result};
@@ -347,6 +347,26 @@ impl Runtime {
         for passive in self.passives.clone().into_iter().filter(|passive| {
             passive.source == source_id && passive.rule.trigger.as_deref() == Some("attack_after")
         }) {
+            if passive.rule.operation == "heal" {
+                if bool_field(source, "is_alive")
+                    && context_matches(
+                        &passive.rule,
+                        passive.source_character_id,
+                        skill,
+                        false,
+                    )
+                    && condition(&passive.rule, source)
+                {
+                    triggered.extend(heal_self(
+                        proto,
+                        state,
+                        source_id,
+                        passive.rule.id,
+                        passive.value,
+                    )?);
+                }
+                continue;
+            }
             for result in hit_results.clone() {
                 let Some(target_id) = i32_field(result, "target_id") else {
                     continue;

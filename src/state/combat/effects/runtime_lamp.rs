@@ -128,12 +128,13 @@ fn add_lamp(
     Ok(())
 }
 
-pub(super) fn heal_all(
+fn heal_targets(
     proto: &ProtoRegistry,
     state: &mut DynamicMessage,
     source_id: i32,
     effect_id: i32,
     value: i32,
+    target_id: Option<i32>,
 ) -> Result<Vec<DynamicMessage>, StateError> {
     let mut members = message_list(state, "members");
     let source = members
@@ -144,7 +145,9 @@ pub(super) fn heal_all(
     let source_type = member_type(&source)?;
     let mut results = Vec::new();
     for target in members.iter_mut().filter(|member| {
-        bool_field(member, "is_alive") && member_type(member).ok() == Some(source_type)
+        bool_field(member, "is_alive")
+            && member_type(member).ok() == Some(source_type)
+            && target_id.is_none_or(|id| member_id(member).ok() == Some(id))
     }) {
         let target_id = member_id(target)?;
         let maximum = i32_field(target, "max_hp")
@@ -179,6 +182,26 @@ pub(super) fn heal_all(
         Value::List(members.into_iter().map(Value::Message).collect()),
     );
     Ok(results)
+}
+
+pub(super) fn heal_all(
+    proto: &ProtoRegistry,
+    state: &mut DynamicMessage,
+    source_id: i32,
+    effect_id: i32,
+    value: i32,
+) -> Result<Vec<DynamicMessage>, StateError> {
+    heal_targets(proto, state, source_id, effect_id, value, None)
+}
+
+pub(super) fn heal_self(
+    proto: &ProtoRegistry,
+    state: &mut DynamicMessage,
+    source_id: i32,
+    effect_id: i32,
+    value: i32,
+) -> Result<Vec<DynamicMessage>, StateError> {
+    heal_targets(proto, state, source_id, effect_id, value, Some(source_id))
 }
 
 impl Runtime {
