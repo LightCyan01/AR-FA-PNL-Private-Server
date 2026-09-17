@@ -47,6 +47,18 @@ fn skill_damage_curves_follow_live_count_hp_and_direction() {
         2_000
     );
     assert_eq!(
+        scaled_skill_damage(skill(11000301), &source, 1).unwrap(),
+        1_000
+    );
+    assert_eq!(
+        scaled_skill_damage(skill(11000301), &source, 2).unwrap(),
+        0
+    );
+    assert_eq!(
+        scaled_skill_damage(skill(14000315), &source, 1).unwrap(),
+        4_000
+    );
+    assert_eq!(
         scaled_skill_damage(skill(11000511), &source, 1).unwrap(),
         500
     );

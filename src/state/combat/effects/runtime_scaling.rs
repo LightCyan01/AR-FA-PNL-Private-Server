@@ -49,6 +49,15 @@ fn scaled_skill_modifier(
         if rule.operation != "skill_damage_scale" || rule.summary != summary {
             return Ok(total);
         }
+        if rule.scale_by == "opponent_count"
+            && rule.scale_input_min == rule.scale_input_max
+        {
+            return Ok(if opponent_count == rule.scale_input_min {
+                total.saturating_add(i64::from(effect.value))
+            } else {
+                total
+            });
+        }
         let (input, denominator) = match rule.scale_by.as_str() {
             "opponent_count" => (i64::from(opponent_count), 1),
             "source_hp" => (

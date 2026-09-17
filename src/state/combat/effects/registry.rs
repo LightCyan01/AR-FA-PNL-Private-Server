@@ -409,8 +409,11 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                         || !matches!(r.scale_by.as_str(), "opponent_count" | "source_hp")
                         || (r.summary == 3 && r.scale_by != "source_hp")
                         || r.scale_input_min < 0
-                        || r.scale_input_max <= r.scale_input_min
-                        || r.scale_output_max <= 0))
+                        || r.scale_input_max < r.scale_input_min
+                        || (r.scale_input_max == r.scale_input_min
+                            && (r.scale_by != "opponent_count" || r.scale_input_min == 0))
+                        || (r.scale_input_max > r.scale_input_min
+                            && r.scale_output_max <= 0)))
                 || (r.operation == "heal"
                     && !r.scale_by.is_empty()
                     && (r.mode != "active"
