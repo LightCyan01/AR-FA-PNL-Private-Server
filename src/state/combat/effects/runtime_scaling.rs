@@ -16,15 +16,22 @@ pub(crate) fn scaled_break_damage(
     scaled_skill_modifier(skill, source, 0, 3)
 }
 
-pub(super) fn scaled_source_hp_value(
+pub(super) fn scaled_effect_value(
     rule: &Rule,
     source: &DynamicMessage,
+    opponent_count: i32,
     minimum_output: i32,
 ) -> Result<i32, StateError> {
-    let maximum_hp = i64::from(i32_field(source, "max_hp").unwrap_or(1).max(1));
-    let minimum = i64::from(rule.scale_input_min) * maximum_hp;
-    let span = i64::from(rule.scale_input_max - rule.scale_input_min) * maximum_hp;
-    let input = i64::from(i32_field(source, "hp").unwrap_or_default().max(0)) * 100;
+    let (input, denominator) = match rule.scale_by.as_str() {
+        "opponent_count" => (i64::from(opponent_count), 1),
+        "source_hp" => (
+            i64::from(i32_field(source, "hp").unwrap_or_default().max(0)) * 100,
+            i64::from(i32_field(source, "max_hp").unwrap_or(1).max(1)),
+        ),
+        _ => return Err(StateError::InvalidRequest),
+    };
+    let minimum = i64::from(rule.scale_input_min) * denominator;
+    let span = i64::from(rule.scale_input_max - rule.scale_input_min) * denominator;
     let mut progress = input.clamp(minimum, minimum + span) - minimum;
     if rule.scale_descending {
         progress = span - progress;

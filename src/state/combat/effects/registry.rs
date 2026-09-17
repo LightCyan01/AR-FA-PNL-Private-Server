@@ -422,8 +422,19 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                         || r.scale_input_min < 0
                         || r.scale_input_max <= r.scale_input_min
                         || r.scale_output_max <= r.fixed.unwrap_or_default()))
+                || (r.operation == "summary"
+                    && !r.scale_by.is_empty()
+                    && (r.mode != "active"
+                        || r.scale_by != "opponent_count"
+                        || r.fixed.is_none()
+                        || r.scale_input_min < 0
+                        || r.scale_input_max <= r.scale_input_min
+                        || r.scale_output_max <= r.fixed.unwrap_or_default()))
                 || (!r.scale_by.is_empty()
-                    && !matches!(r.operation.as_str(), "skill_damage_scale" | "heal"))
+                    && !matches!(
+                        r.operation.as_str(),
+                        "skill_damage_scale" | "heal" | "summary"
+                    ))
                 || r.stack_cap < 0
                 || r.source_side_count_min < 0
                 || r.source_side_count_max < 0

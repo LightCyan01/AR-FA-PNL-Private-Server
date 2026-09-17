@@ -140,3 +140,46 @@ fn skill_damage_curves_follow_live_count_hp_and_direction() {
         4_000
     );
 }
+
+#[test]
+fn granted_buffs_scale_with_live_opponent_count() {
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let source = empty_message(&proto, "blend.model.BattleMember").unwrap();
+    for (effect_id, skill_id, summary, minimum, maximum) in [
+        (91001023, 11000541, 3, 200, 1_000),
+        (91001023, 11003136, 3, 1_000, 4_000),
+        (91001856, 11003136, 1, 1_000, 4_000),
+    ] {
+        let rule = rule_for(effect_id, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                rule.target.as_str(),
+                rule.summary,
+                &rule.expiry,
+                rule.duration,
+                rule.scale_by.as_str(),
+            ),
+            ("allies", summary, &Expiry::Turn, 1, "opponent_count")
+        );
+        assert_eq!(
+            super::super::runtime_scaling::scaled_effect_value(
+                rule, &source, 1, minimum,
+            )
+            .unwrap(),
+            minimum
+        );
+        assert_eq!(
+            super::super::runtime_scaling::scaled_effect_value(
+                rule, &source, 4, minimum,
+            )
+            .unwrap(),
+            maximum
+        );
+    }
+}
