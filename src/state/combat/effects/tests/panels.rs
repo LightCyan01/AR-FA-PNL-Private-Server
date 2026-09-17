@@ -33,6 +33,18 @@ fn shared_enemy_panel_rules_keep_catalog_target_and_limit() {
         ),
         ("self", 39, 1)
     );
+    let highest_magic = rule_for(91001313, "active", "skill", 11002669)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            highest_magic.target.as_str(),
+            highest_magic.panel_from_ids.as_slice(),
+            highest_magic.panel_to_id,
+            highest_magic.panel_limit,
+        ),
+        ("highest_magic_ally", [11].as_slice(), 12, 1)
+    );
 }
 
 #[test]
