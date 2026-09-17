@@ -10,6 +10,7 @@ mod panels;
 mod penetration;
 mod scaling;
 mod skill_context;
+mod status_catalog;
 mod statuses;
 mod summons;
 mod support_scopes;
