@@ -445,7 +445,13 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                 || r.trigger.as_deref().is_some_and(|trigger| {
                     !matches!(
                         trigger,
-                        "attack_after" | "action_after" | "party_tool_after" | "battle_start"
+                        "attack_after"
+                            | "action_after"
+                            | "party_tool_after"
+                            | "battle_start"
+                            | "attacked"
+                            | "heal_received"
+                            | "panel_acquired"
                     )
                 })
         })

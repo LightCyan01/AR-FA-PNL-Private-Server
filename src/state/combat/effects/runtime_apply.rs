@@ -8,7 +8,7 @@ use super::runtime_match::{
     state_application_blocked,
 };
 use super::runtime_results::{display, effect_result, status_display, status_effect_result};
-use super::runtime_resources::add_burst_gauge;
+use super::runtime_resources::{add_burst_gauge, add_party_gauge};
 use super::runtime_scaling::scaled_source_hp_value;
 use super::runtime_targeting::resolved_targets;
 use crate::state::combat::prelude::*;
@@ -406,14 +406,7 @@ impl Runtime {
                 continue;
             }
             if rule.operation == "party_gauge" {
-                let maximum = registry()?.max_party_gauge;
-                let heal = i64::from(maximum).saturating_mul(i64::from(value.max(0))) / 10_000;
-                let heal = i32::try_from(heal).map_err(|_| StateError::InvalidRequest)?;
-                let current = i32_field(state, "party_gauge").unwrap_or_default().max(0);
-                state.set_field_by_name(
-                    "party_gauge",
-                    Value::I32(current.saturating_add(heal).min(maximum)),
-                );
+                let heal = add_party_gauge(state, value)?;
                 let mut result = effect_result(
                     proto, effect.id, source_id, source_id, is_skill, rule, value,
                 )?;

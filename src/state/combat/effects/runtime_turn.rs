@@ -3,6 +3,7 @@ use super::runtime::{Instance, Runtime};
 use super::runtime_lamp::{heal_all, heal_self};
 use super::runtime_match::{condition, context_matches, selected_for_source_character};
 use super::runtime_panel::scale_panel_value;
+use super::runtime_resources::{add_party_gauge, apply_party_gauge_passive};
 use super::runtime_results::{effect_result, turn_state_change_result};
 use crate::state::combat::prelude::*;
 use std::collections::BTreeSet;
@@ -241,6 +242,13 @@ impl Runtime {
         let actor_id = member_id(&current_actor(state)?)?;
         let panel_rate = self.panel_effect_rate(state)?;
         self.trigger_panel_lamps(state, actor_id)?;
+        for passive in self.passives.iter().filter(|passive| {
+            passive.source == actor_id
+                && passive.rule.operation == "party_gauge"
+                && passive.rule.trigger.as_deref() == Some("panel_acquired")
+        }) {
+            add_party_gauge(state, passive.value)?;
+        }
         let actor_type = member_type(&current_actor(state)?)?;
         let panel_id = effective_battle_panel_id(state);
         let mut members = message_list(state, "members");
@@ -335,6 +343,9 @@ impl Runtime {
                     passive.rule.id,
                     passive.value,
                 )?),
+                "party_gauge" => {
+                    triggered.push(apply_party_gauge_passive(proto, state, &passive)?)
+                }
                 _ => return Err(StateError::InvalidRequest),
             }
         }

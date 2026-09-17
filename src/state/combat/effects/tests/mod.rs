@@ -18,3 +18,4 @@ mod status_catalog;
 mod statuses;
 mod summons;
 mod support_scopes;
+mod triggered_resources;

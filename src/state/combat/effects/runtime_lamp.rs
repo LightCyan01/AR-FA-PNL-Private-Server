@@ -1,5 +1,6 @@
 use super::registry::{registry, LampAbilityRule, Rule};
 use super::runtime::Runtime;
+use super::runtime_resources::apply_party_gauge_passive;
 use crate::state::combat::prelude::*;
 
 fn current_lamp(member: &DynamicMessage, skill_id: i32) -> Result<i32, StateError> {
@@ -412,6 +413,24 @@ impl Runtime {
         let mut results = Vec::new();
         for (source_id, effect_id, value) in heals {
             results.extend(heal_all(proto, state, source_id, effect_id, value)?);
+        }
+        for passive in self.passives.iter().filter(|passive| {
+            passive.rule.operation == "party_gauge"
+                && match passive.rule.trigger.as_deref() {
+                    Some("heal_received") => valid_results.iter().any(|result| {
+                        i32_field(result, "target_id") == Some(passive.source)
+                            && message_i32_field(result, "hp_heal", "value").unwrap_or(0) > 0
+                    }),
+                    Some("attacked") => {
+                        skill.skill_effect_type == 1
+                            && valid_results.iter().any(|result| {
+                                i32_field(result, "target_id") == Some(passive.source)
+                            })
+                    }
+                    _ => false,
+                }
+        }) {
+            results.push(apply_party_gauge_passive(proto, state, passive)?);
         }
         Ok(results)
     }
