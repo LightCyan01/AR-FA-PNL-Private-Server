@@ -206,6 +206,31 @@ fn incoming_damage_effects_follow_master_lifetimes_and_break_policy() {
         ),
         ("regeneration", "self", 910037, 3)
     );
+    for (effect_id, owner_id, target, duration) in [
+        (91001035, 14000581, "allies", 5),
+        (91001123, 11000836, "self", 3),
+        (91001124, 14000846, "self", 5),
+        (91001357, 14003845, "self", 2),
+        (91001493, 12002204, "targets", 1),
+        (91001535, 12003419, "allies", 2),
+        (91001535, 14002194, "allies", 2),
+        (91001535, 32003043, "allies", 2),
+        (780042025, 22001900, "self", 2),
+        (780052003, 32002117, "targets", 3),
+    ] {
+        let regeneration = rule_for(effect_id, "active", "skill", owner_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                regeneration.operation.as_str(),
+                regeneration.target.as_str(),
+                regeneration.state_id,
+                regeneration.duration,
+            ),
+            ("regeneration", target, 910037, duration)
+        );
+    }
 
     runtime
         .apply_for_action(
