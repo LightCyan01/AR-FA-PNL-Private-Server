@@ -4,6 +4,45 @@ use prost::Message;
 use std::path::Path;
 
 #[test]
+fn mirrored_received_damage_debuffs_keep_owner_specific_hit_counts() {
+    let rule = |effect_id, skill_id| {
+        rule_for(effect_id, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap()
+    };
+    for (skill_id, self_duration, target_duration) in [
+        (20002065, 3, 3),
+        (22000004, 1, 1),
+        (26002171, 3, 1),
+        (32005448, 3, 1),
+    ] {
+        let self_rule = rule(780010026, skill_id);
+        let target_rule = rule(780010030, skill_id);
+        assert_eq!(
+            (
+                self_rule.target.as_str(),
+                &self_rule.expiry,
+                self_rule.duration,
+                self_rule.summary,
+            ),
+            ("self", &Expiry::Attacked, self_duration, 11)
+        );
+        assert_eq!(
+            (
+                target_rule.target.as_str(),
+                &target_rule.expiry,
+                target_rule.duration,
+                target_rule.summary,
+            ),
+            ("targets", &Expiry::Attacked, target_duration, 11)
+        );
+    }
+    assert!(rule_for(780010026, "active", "skill", 20000092)
+        .unwrap()
+        .is_none());
+}
+
+#[test]
 fn compound_evasion_skills_bind_only_the_evasion_effect() {
     for (effect_id, skill_id, target) in [
         (91001209, 12002705, "self"),
