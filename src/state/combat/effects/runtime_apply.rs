@@ -4,7 +4,8 @@ use super::runtime::{Instance, Runtime};
 use super::runtime_form::apply_skill_form;
 use super::runtime_lamp::{is_lamp_mechanic, lamp_condition_matches};
 use super::runtime_match::{
-    amount, condition, contextual_recipient, selected, state_application_blocked,
+    amount, condition, contextual_recipient, selected, selected_with_condition_target,
+    state_application_blocked,
 };
 use super::runtime_results::{display, effect_result, status_display, status_effect_result};
 use super::runtime_resources::add_burst_gauge;
@@ -156,6 +157,7 @@ impl Runtime {
         rng: Option<(&[u8], &str, i32)>,
     ) -> Result<Vec<DynamicMessage>, StateError> {
         let mut members = message_list(state, "members");
+        let condition_members = panel_context.map(|context| message_list(context, "members"));
         let source = members
             .iter()
             .find(|m| i32_field(m, "member_id") == Some(source_id))
@@ -652,12 +654,25 @@ impl Runtime {
             }
             if rule.operation == "status" {
                 for target_index in 0..members.len() {
-                    if !bool_field(&members[target_index], "is_alive")
-                        || !selected(rule, &source, &members[target_index], targets)
-                    {
+                    if !bool_field(&members[target_index], "is_alive") {
                         continue;
                     }
                     let target_id = member_id(&members[target_index])?;
+                    let condition_target = condition_members
+                        .as_ref()
+                        .and_then(|context| {
+                            context.iter().find(|member| member_id(member).ok() == Some(target_id))
+                        })
+                        .unwrap_or(&members[target_index]);
+                    if !selected_with_condition_target(
+                        rule,
+                        &source,
+                        &members[target_index],
+                        condition_target,
+                        targets,
+                    ) {
+                        continue;
+                    }
                     let resistance =
                         message_list(&members[target_index], "state_change_resistances")
                             .into_iter()

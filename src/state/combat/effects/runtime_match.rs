@@ -145,11 +145,29 @@ pub(crate) fn selected(
     target: &DynamicMessage,
     targets: &[i32],
 ) -> bool {
-    selected_for_source_character(
+    selected_for_source_character_with_condition_target(
         rule,
         source,
         message_i32_field(source, "ally", "character_id").unwrap_or_default(),
         target,
+        target,
+        targets,
+    )
+}
+
+pub(super) fn selected_with_condition_target(
+    rule: &Rule,
+    source: &DynamicMessage,
+    target: &DynamicMessage,
+    condition_target: &DynamicMessage,
+    targets: &[i32],
+) -> bool {
+    selected_for_source_character_with_condition_target(
+        rule,
+        source,
+        message_i32_field(source, "ally", "character_id").unwrap_or_default(),
+        target,
+        condition_target,
         targets,
     )
 }
@@ -159,6 +177,24 @@ pub(super) fn selected_for_source_character(
     source: &DynamicMessage,
     source_character_id: i32,
     target: &DynamicMessage,
+    targets: &[i32],
+) -> bool {
+    selected_for_source_character_with_condition_target(
+        rule,
+        source,
+        source_character_id,
+        target,
+        target,
+        targets,
+    )
+}
+
+fn selected_for_source_character_with_condition_target(
+    rule: &Rule,
+    source: &DynamicMessage,
+    source_character_id: i32,
+    target: &DynamicMessage,
+    condition_target: &DynamicMessage,
     targets: &[i32],
 ) -> bool {
     let id = i32_field(target, "member_id").unwrap_or(0);
@@ -172,7 +208,7 @@ pub(super) fn selected_for_source_character(
         _ => false,
     };
     recipient_matches
-        && target_condition(rule, target)
+        && target_condition(rule, condition_target)
         && (rule.source_character_ids.is_empty()
             || rule.source_character_ids.contains(&source_character_id))
         && (rule.target_character_ids.is_empty()
