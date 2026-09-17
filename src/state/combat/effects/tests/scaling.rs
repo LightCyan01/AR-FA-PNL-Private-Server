@@ -93,6 +93,16 @@ fn skill_damage_curves_follow_live_count_hp_and_direction() {
         10_000
     );
     assert_eq!(
+        instant_summary(skill(12000916), &source, false, 1).unwrap(),
+        5_000
+    );
+    let mut threshold = source.clone();
+    threshold.set_field_by_name("hp", Value::I32(50));
+    assert_eq!(
+        instant_summary(skill(12000916), &threshold, false, 1).unwrap(),
+        0
+    );
+    assert_eq!(
         scaled_break_damage(skill(11003617), &source).unwrap(),
         1_000
     );

@@ -10,8 +10,10 @@ pub(super) fn condition(rule: &Rule, source: &DynamicMessage) -> bool {
             key.as_str(),
             "hp_min"
                 | "hp_max"
+                | "hp_below"
                 | "target_hp_min"
                 | "target_hp_max"
+                | "target_hp_below"
                 | "target_negative"
                 | "target_abnormal"
                 | "target_positive"
@@ -34,6 +36,10 @@ pub(super) fn condition(rule: &Rule, source: &DynamicMessage) -> bool {
             .condition
             .get("hp_max")
             .is_none_or(|n| hp * 100 <= maximum * i64::from(*n))
+        && rule
+            .condition
+            .get("hp_below")
+            .is_none_or(|n| hp * 100 < maximum * i64::from(*n))
         && (rule.source_state_ids.is_empty()
             || message_list(source, "state_changes").iter().any(|change| {
                 rule.source_state_ids
@@ -65,6 +71,10 @@ pub(super) fn target_condition(rule: &Rule, target: &DynamicMessage) -> bool {
             .condition
             .get("target_hp_max")
             .is_none_or(|n| hp * 100 <= maximum * i64::from(*n))
+        && rule
+            .condition
+            .get("target_hp_below")
+            .is_none_or(|n| hp * 100 < maximum * i64::from(*n))
         && rule
             .condition
             .get("target_negative")
