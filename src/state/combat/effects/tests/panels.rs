@@ -22,6 +22,17 @@ fn shared_enemy_panel_rules_keep_catalog_target_and_limit() {
         ),
         ("targets", 36, 1)
     );
+    let range_switch = rule_for(91001433, "active", "skill", 11002464)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            range_switch.target.as_str(),
+            range_switch.panel_to_id,
+            range_switch.panel_limit,
+        ),
+        ("self", 39, 1)
+    );
 }
 
 #[test]
