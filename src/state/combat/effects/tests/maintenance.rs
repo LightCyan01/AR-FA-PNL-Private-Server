@@ -328,7 +328,7 @@ fn triggered_ability_resources_bind_by_catalog_slot() {
 
     lower_hp(&mut state);
     let results = runtime
-        .trigger_party_tool_effects(&proto, &mut state)
+        .trigger_party_tool_effects(&proto, &rules, &mut state)
         .unwrap();
     let allies = message_list(&state, "members")
         .into_iter()

@@ -1,7 +1,8 @@
 use super::registry::{registry, LampAbilityRule, Rule};
 use super::runtime::Runtime;
-use super::runtime_resources::apply_party_gauge_passive;
+use super::runtime_resources::{apply_burst_gauge_passive, apply_party_gauge_passive};
 use crate::state::combat::prelude::*;
+use std::collections::BTreeSet;
 
 fn current_lamp(member: &DynamicMessage, skill_id: i32) -> Result<i32, StateError> {
     message_list(&member_status(member, "ally")?, "skills")
@@ -268,6 +269,7 @@ impl Runtime {
     pub(crate) fn trigger_party_tool_effects(
         &self,
         proto: &ProtoRegistry,
+        rules: &TutorialRules,
         state: &mut DynamicMessage,
     ) -> Result<Vec<DynamicMessage>, StateError> {
         let triggered = self.trigger_lamps(state, "party_tool_after", None)?;
@@ -291,19 +293,31 @@ impl Runtime {
                 )?);
             }
         }
+        let mut applied = BTreeSet::new();
         for passive in self.passives.iter().filter(|passive| {
             passive.rule.trigger.as_deref() == Some("party_tool_after")
         }) {
-            if passive.rule.operation != "heal" {
-                return Err(StateError::InvalidRequest);
+            if matches!(passive.rule.operation.as_str(), "party_gauge" | "burst_gauge")
+                && !applied.insert((passive.source, passive.rule.owner_id, passive.rule.id))
+            {
+                continue;
             }
-            results.extend(heal_all(
-                proto,
-                state,
-                passive.source,
-                passive.rule.id,
-                passive.value,
-            )?);
+            match passive.rule.operation.as_str() {
+                "heal" => results.extend(heal_all(
+                    proto,
+                    state,
+                    passive.source,
+                    passive.rule.id,
+                    passive.value,
+                )?),
+                "party_gauge" => {
+                    results.push(apply_party_gauge_passive(proto, state, passive)?)
+                }
+                "burst_gauge" => results.push(apply_burst_gauge_passive(
+                    proto, rules, state, passive,
+                )?),
+                _ => return Err(StateError::InvalidRequest),
+            }
         }
         Ok(results)
     }
@@ -320,14 +334,15 @@ impl Runtime {
     pub(crate) fn trigger_lamps_after_action(
         &self,
         proto: &ProtoRegistry,
+        rules: &TutorialRules,
         state: &mut DynamicMessage,
         before: &DynamicMessage,
         actor_id: i32,
         skill: &TutorialSkill,
-        results: &[DynamicMessage],
+        skill_results: &[DynamicMessage],
         is_skill: bool,
     ) -> Result<Vec<DynamicMessage>, StateError> {
-        let valid_results = results
+        let valid_results = skill_results
             .iter()
             .filter(|result| !bool_field(result, "is_miss") && !bool_field(result, "is_invalid"))
             .collect::<Vec<_>>();
@@ -414,8 +429,9 @@ impl Runtime {
         for (source_id, effect_id, value) in heals {
             results.extend(heal_all(proto, state, source_id, effect_id, value)?);
         }
+        let mut applied = BTreeSet::new();
         for passive in self.passives.iter().filter(|passive| {
-            passive.rule.operation == "party_gauge"
+            matches!(passive.rule.operation.as_str(), "party_gauge" | "burst_gauge")
                 && match passive.rule.trigger.as_deref() {
                     Some("heal_received") => valid_results.iter().any(|result| {
                         i32_field(result, "target_id") == Some(passive.source)
@@ -427,10 +443,37 @@ impl Runtime {
                                 i32_field(result, "target_id") == Some(passive.source)
                             })
                     }
+                    Some("no_damage_received") => {
+                        skill.skill_effect_type == 1
+                            && skill_results.iter().any(|result| {
+                                !bool_field(result, "is_invalid")
+                                    && i32_field(result, "target_id") == Some(passive.source)
+                                    && message_i64_field(result, "hp_damage", "value")
+                                        .unwrap_or_default()
+                                        <= 0
+                            })
+                    }
                     _ => false,
                 }
         }) {
-            results.push(apply_party_gauge_passive(proto, state, passive)?);
+            let key = (
+                passive.source,
+                passive.rule.owner_id,
+                passive.rule.id,
+                passive.rule.trigger.as_deref().unwrap_or_default(),
+            );
+            if !applied.insert(key) {
+                continue;
+            }
+            match passive.rule.operation.as_str() {
+                "party_gauge" => {
+                    results.push(apply_party_gauge_passive(proto, state, passive)?)
+                }
+                "burst_gauge" => results.push(apply_burst_gauge_passive(
+                    proto, rules, state, passive,
+                )?),
+                _ => unreachable!(),
+            }
         }
         Ok(results)
     }
@@ -518,6 +561,7 @@ mod tests {
             "/../schemas/atelier-resleriana-2.16.0.protoset"
         )))
         .unwrap();
+        let rules = load_gameplay_rules().unwrap();
         let mut skill = empty_message(&proto, "blend.model.BattleSkill").unwrap();
         skill.set_field_by_name("skill_id", Value::I32(12001539));
         skill.set_field_by_name("skill_type", Value::I32(2));
@@ -539,7 +583,9 @@ mod tests {
         assert_eq!(predicted_skill_lamp(member, 12001539).unwrap(), Some(0));
 
         advance_skill_lamp(&mut state, 1, 12001539).unwrap();
-        runtime.trigger_party_tool_effects(&proto, &mut state).unwrap();
+        runtime
+            .trigger_party_tool_effects(&proto, &rules, &mut state)
+            .unwrap();
         let members = message_list(&state, "members");
         let member = &members[0];
         assert_eq!(current_lamp(member, 12001539).unwrap(), 1);

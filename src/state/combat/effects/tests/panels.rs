@@ -275,7 +275,9 @@ fn enhancement_panel_potency_supports_timed_and_passive_sources() {
         )
         .unwrap();
     set_timeline_panels(&proto, &mut state, &[33], 1, 103).unwrap();
-    runtime.acquire_current_panel(&mut state).unwrap();
+    runtime
+        .acquire_current_panel(&proto, &rules, &mut state)
+        .unwrap();
     assert_eq!(runtime.panel_damage_taken.get(&actor_id), Some(&-5_000));
 
     let mut members = message_list(&state, "members");
@@ -290,7 +292,9 @@ fn enhancement_panel_potency_supports_timed_and_passive_sources() {
         Value::List(members.into_iter().map(Value::Message).collect()),
     );
     set_timeline_panels(&proto, &mut state, &[42], 1, 104).unwrap();
-    runtime.acquire_current_panel(&mut state).unwrap();
+    runtime
+        .acquire_current_panel(&proto, &rules, &mut state)
+        .unwrap();
     let actor = message_list(&state, "members")
         .into_iter()
         .find(|member| member_id(member).ok() == Some(actor_id))
@@ -326,9 +330,13 @@ fn acquisition_panels_apply_once_and_expire_on_hit() {
     let mut runtime = start.effects;
 
     set_timeline_panels(&proto, &mut state, &[33], 1, 101).unwrap();
-    runtime.acquire_current_panel(&mut state).unwrap();
+    runtime
+        .acquire_current_panel(&proto, &rules, &mut state)
+        .unwrap();
     assert_eq!(runtime.panel_damage_taken.get(&actor_id), Some(&-4_000));
-    runtime.acquire_current_panel(&mut state).unwrap();
+    runtime
+        .acquire_current_panel(&proto, &rules, &mut state)
+        .unwrap();
     assert_eq!(runtime.panel_damage_taken.get(&actor_id), Some(&-4_000));
     let actor = message_list(&state, "members")
         .into_iter()
@@ -344,7 +352,9 @@ fn acquisition_panels_apply_once_and_expire_on_hit() {
     assert!(!runtime.panel_damage_taken.contains_key(&actor_id));
 
     set_timeline_panels(&proto, &mut state, &[36], 1, 102).unwrap();
-    runtime.acquire_current_panel(&mut state).unwrap();
+    runtime
+        .acquire_current_panel(&proto, &rules, &mut state)
+        .unwrap();
     assert_eq!(runtime.panel_damage_taken.get(&actor_id), Some(&4_000));
 
     let mut members = message_list(&state, "members");
@@ -359,7 +369,9 @@ fn acquisition_panels_apply_once_and_expire_on_hit() {
         Value::List(members.into_iter().map(Value::Message).collect()),
     );
     set_timeline_panels(&proto, &mut state, &[42], 1, 103).unwrap();
-    runtime.acquire_current_panel(&mut state).unwrap();
+    runtime
+        .acquire_current_panel(&proto, &rules, &mut state)
+        .unwrap();
     let actor = message_list(&state, "members")
         .into_iter()
         .find(|member| member_id(member).ok() == Some(actor_id))

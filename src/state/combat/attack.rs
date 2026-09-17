@@ -640,6 +640,7 @@ fn resolve_skill_action(
         }
         effect_results.extend(runtime.trigger_lamps_after_action(
             proto,
+            rules,
             state,
             &panel_context,
             actor_id,
@@ -870,7 +871,7 @@ pub(crate) fn reduce_battle_attack_with_effects(
 ) -> Result<BattleAttackMutation, StateError> {
     effect_runtime.prepare(&state, start_txid)?;
     effect_runtime.refresh(proto, &mut state)?;
-    effect_runtime.acquire_current_panel(&mut state)?;
+    effect_runtime.acquire_current_panel(proto, rules, &mut state)?;
     let mode = i32_or_enum_field(request, "mode").ok_or(StateError::InvalidRequest)?;
     let command_fields = [
         "skill_command",
@@ -1241,7 +1242,7 @@ pub(crate) fn reduce_battle_attack_with_effects(
             // A multi-tool command emits one action per tool but consumes one panel.
             if consumes_panel {
                 consume_timeline_panel(proto, rules, &mut state)?;
-                effect_runtime.acquire_current_panel(&mut state)?;
+                effect_runtime.acquire_current_panel(proto, rules, &mut state)?;
             }
 
             let mut members = message_list(&state, "members");
@@ -1309,7 +1310,7 @@ pub(crate) fn reduce_battle_attack_with_effects(
             );
             if matches!(mode, 1 | 8) && action_index + 1 == action_count {
                 resolved.effect_results.extend(
-                    effect_runtime.trigger_party_tool_effects(proto, &mut state)?,
+                    effect_runtime.trigger_party_tool_effects(proto, rules, &mut state)?,
                 );
             }
             state.set_field_by_name("total_turn", Value::I32(turn_number));
@@ -1386,7 +1387,7 @@ pub(crate) fn reduce_battle_attack_with_effects(
                     rules.constants.timeline_panel_count,
                     1,
                 )?;
-                effect_runtime.acquire_current_panel(&mut state)?;
+                effect_runtime.acquire_current_panel(proto, rules, &mut state)?;
                 refresh_burst_enable(rules, &mut state)?;
                 effect_runtime.refresh(proto, &mut state)?;
                 let mut wave_start = empty_message(proto, "blend.model.BattleWaveStart")?;
@@ -1476,7 +1477,7 @@ pub(crate) fn reduce_battle_attack_with_effects(
                 effect_runtime.consume_panel_potency(&state, actor_id)?;
                 consume_timeline_panel(proto, rules, &mut state)?;
                 effect_runtime.expire(actor_id, &[], true, false);
-                effect_runtime.acquire_current_panel(&mut state)?;
+                effect_runtime.acquire_current_panel(proto, rules, &mut state)?;
             }
             effect_runtime.refresh(proto, &mut state)?;
             refresh_burst_enable(rules, &mut state)?;
@@ -1610,7 +1611,7 @@ pub(crate) fn reduce_battle_attack_with_effects(
                 action_number,
             )?;
             consume_timeline_panel(proto, rules, &mut state)?;
-            effect_runtime.acquire_current_panel(&mut state)?;
+            effect_runtime.acquire_current_panel(proto, rules, &mut state)?;
             state.set_field_by_name("total_turn", Value::I32(total_turn));
             refresh_burst_enable(rules, &mut state)?;
             actions.push(build_action(

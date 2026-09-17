@@ -42,6 +42,42 @@ pub(super) fn apply_party_gauge_passive(
     Ok(result)
 }
 
+pub(super) fn apply_burst_gauge_passive(
+    proto: &ProtoRegistry,
+    rules: &TutorialRules,
+    state: &mut DynamicMessage,
+    passive: &Passive,
+) -> Result<DynamicMessage, StateError> {
+    let mut members = message_list(state, "members");
+    let target = members
+        .iter_mut()
+        .find(|member| i32_field(member, "member_id") == Some(passive.source))
+        .ok_or(StateError::InvalidRequest)?;
+    let delta = add_burst_gauge(
+        target,
+        passive.value,
+        rules.constants.burst_gauge_required_for_one_burst_skill,
+    )?;
+    state.set_field_by_name(
+        "members",
+        Value::List(members.into_iter().map(Value::Message).collect()),
+    );
+    let mut result = effect_result(
+        proto,
+        passive.rule.id,
+        passive.source,
+        passive.source,
+        false,
+        &passive.rule,
+        passive.value,
+    )?;
+    result.set_field_by_name(
+        "add_burst_gauge",
+        Value::Message(wrapper_i32(proto, delta)?),
+    );
+    Ok(result)
+}
+
 pub(super) fn add_burst_gauge(
     member: &mut DynamicMessage,
     value: i32,

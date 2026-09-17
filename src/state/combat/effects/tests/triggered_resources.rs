@@ -3,6 +3,31 @@ use crate::state::combat::prelude::*;
 use std::collections::BTreeMap;
 use std::path::Path;
 
+fn set_burst_gauge(state: &mut DynamicMessage, member: i32, value: i32) {
+    let mut members = message_list(state, "members");
+    let member = members
+        .iter_mut()
+        .find(|candidate| member_id(candidate).ok() == Some(member))
+        .unwrap();
+    let mut gauge = member_status(member, "burst_gauge").unwrap();
+    gauge.set_field_by_name("current_gauge", Value::I32(value));
+    gauge.set_field_by_name("is_enable", Value::Bool(false));
+    member.set_field_by_name("burst_gauge", Value::Message(gauge));
+    state.set_field_by_name(
+        "members",
+        Value::List(members.into_iter().map(Value::Message).collect()),
+    );
+}
+
+fn burst_gauge(state: &DynamicMessage, member: i32) -> i32 {
+    message_list(state, "members")
+        .into_iter()
+        .find(|candidate| member_id(candidate).ok() == Some(member))
+        .and_then(|member| member_status(&member, "burst_gauge").ok())
+        .and_then(|gauge| i32_field(&gauge, "current_gauge"))
+        .unwrap()
+}
+
 #[test]
 fn triggered_item_gauge_rules_follow_their_catalog_events() {
     let catalog = registry().unwrap();
@@ -89,6 +114,7 @@ fn triggered_item_gauge_rules_follow_their_catalog_events() {
     runtime
         .trigger_lamps_after_action(
             &proto,
+            &rules,
             &mut state,
             &before,
             actor_id,
@@ -109,6 +135,7 @@ fn triggered_item_gauge_rules_follow_their_catalog_events() {
     runtime
         .trigger_lamps_after_action(
             &proto,
+            &rules,
             &mut state,
             &before,
             actor_id,
@@ -122,6 +149,176 @@ fn triggered_item_gauge_rules_follow_their_catalog_events() {
     runtime.passives = vec![passive(1990543, Some(2), 3_000)];
     state.set_field_by_name("party_gauge", Value::I32(0));
     runtime.acquired_panel_turn = 0;
-    runtime.acquire_current_panel(&mut state).unwrap();
+    runtime
+        .acquire_current_panel(&proto, &rules, &mut state)
+        .unwrap();
     assert_eq!(i32_field(&state, "party_gauge"), Some(expected(3_000)));
+}
+
+#[test]
+fn shared_burst_gauge_rules_follow_events_without_duplicate_gains() {
+    let catalog = registry().unwrap();
+    let mut trigger_counts = BTreeMap::new();
+    for rule in catalog.rules.iter().filter(|rule| {
+        matches!(rule.id, 72001454 | 72001459 | 72001474)
+            && rule.mode == "passive"
+            && rule.owner_type == "ability"
+    }) {
+        *trigger_counts
+            .entry(rule.trigger.as_deref().unwrap())
+            .or_insert(0) += 1;
+    }
+    assert_eq!(
+        trigger_counts,
+        BTreeMap::from([
+            ("action_after", 3),
+            ("attacked", 3),
+            ("heal_received", 1),
+            ("no_damage_received", 6),
+            ("panel_acquired", 1),
+            ("party_action_after", 6),
+            ("party_tool_after", 2),
+        ])
+    );
+
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let rules = load_gameplay_rules().unwrap();
+    let fresh = load_fresh_rules().unwrap();
+    let opened = reduce_talk_event(
+        &proto,
+        &fresh,
+        &rules,
+        starter_resources(&proto, &fresh).unwrap(),
+        101001001,
+        1,
+    )
+    .unwrap();
+    let start = reduce_battle_start(&proto, &rules, opened.resources, 101001002, 1).unwrap();
+    let mut state = start.state;
+    let actor = current_actor(&state).unwrap();
+    let actor_id = member_id(&actor).unwrap();
+    let actor_type = member_type(&actor).unwrap();
+    let skill = rules
+        .skills
+        .iter()
+        .find(|skill| skill.skill_effect_type == 1)
+        .unwrap();
+    let passive = |effect_id, ability_id, owner_index, value| Passive {
+        source: actor_id,
+        value,
+        rule: rule_for_occurrence(
+            effect_id,
+            "passive",
+            "ability",
+            ability_id,
+            owner_index,
+        )
+        .unwrap()
+        .unwrap()
+        .clone(),
+        source_character_id: 0,
+        source_type: actor_type,
+    };
+    let mut runtime = Runtime::default();
+    runtime.prepare(&state, "triggered-burst-gauge").unwrap();
+
+    runtime.passives = vec![passive(72001474, 1990474, Some(1), 1_500)];
+    set_burst_gauge(&mut state, actor_id, 0);
+    runtime
+        .trigger_attack_after(&proto, &rules, &mut state, actor_id, skill, &[])
+        .unwrap();
+    assert_eq!(burst_gauge(&state, actor_id), 15);
+
+    runtime.passives = vec![
+        passive(72001474, 1990565, Some(0), 1_000),
+        passive(72001474, 1990565, Some(1), 1_000),
+    ];
+    set_burst_gauge(&mut state, actor_id, 0);
+    runtime
+        .trigger_attack_after(&proto, &rules, &mut state, actor_id, skill, &[])
+        .unwrap();
+    assert_eq!(burst_gauge(&state, actor_id), 10);
+
+    let hit = build_skill_result(
+        &proto, actor_id, 1, 0, 0, 0, true, false, false, false, false, false, false,
+    )
+    .unwrap();
+    runtime.passives = vec![passive(72001474, 1990504, Some(0), 1_000)];
+    set_burst_gauge(&mut state, actor_id, 0);
+    let before = state.clone();
+    runtime
+        .trigger_lamps_after_action(
+            &proto,
+            &rules,
+            &mut state,
+            &before,
+            actor_id,
+            skill,
+            &[hit],
+            true,
+        )
+        .unwrap();
+    assert_eq!(burst_gauge(&state, actor_id), 10);
+
+    let healed = build_skill_result(
+        &proto, actor_id, 0, 0, 1, 0, false, false, false, false, false, false, false,
+    )
+    .unwrap();
+    runtime.passives = vec![passive(72001474, 1990535, Some(0), 1_000)];
+    set_burst_gauge(&mut state, actor_id, 0);
+    let before = state.clone();
+    runtime
+        .trigger_lamps_after_action(
+            &proto,
+            &rules,
+            &mut state,
+            &before,
+            actor_id,
+            skill,
+            &[healed],
+            true,
+        )
+        .unwrap();
+    assert_eq!(burst_gauge(&state, actor_id), 10);
+
+    let no_damage = build_skill_result(
+        &proto, actor_id, 0, 0, 0, 0, true, false, false, false, false, false, false,
+    )
+    .unwrap();
+    runtime.passives = vec![passive(72001474, 1990471, Some(1), 3_000)];
+    set_burst_gauge(&mut state, actor_id, 0);
+    let before = state.clone();
+    runtime
+        .trigger_lamps_after_action(
+            &proto,
+            &rules,
+            &mut state,
+            &before,
+            actor_id,
+            skill,
+            &[no_damage],
+            true,
+        )
+        .unwrap();
+    assert_eq!(burst_gauge(&state, actor_id), 30);
+
+    runtime.passives = vec![passive(72001474, 1990543, Some(0), 5_000)];
+    set_burst_gauge(&mut state, actor_id, 0);
+    runtime
+        .trigger_party_tool_effects(&proto, &rules, &mut state)
+        .unwrap();
+    assert_eq!(burst_gauge(&state, actor_id), 50);
+
+    runtime.passives = vec![passive(72001474, 1990559, Some(0), 2_500)];
+    set_burst_gauge(&mut state, actor_id, 0);
+    runtime.acquired_panel_wave = 0;
+    runtime.acquired_panel_turn = 0;
+    runtime
+        .acquire_current_panel(&proto, &rules, &mut state)
+        .unwrap();
+    assert_eq!(burst_gauge(&state, actor_id), 25);
 }

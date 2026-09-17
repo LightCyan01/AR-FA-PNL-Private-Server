@@ -618,7 +618,7 @@ pub(crate) fn build_battle_start(
         rules.constants.timeline_panel_count,
         1,
     )?;
-    effects.acquire_current_panel(&mut state)?;
+    effects.acquire_current_panel(proto, rules, &mut state)?;
     refresh_burst_enable(rules, &mut state)?;
 
     let mut start_state = state.clone();

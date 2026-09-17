@@ -452,6 +452,8 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                             | "attacked"
                             | "heal_received"
                             | "panel_acquired"
+                            | "party_action_after"
+                            | "no_damage_received"
                     )
                 })
         })

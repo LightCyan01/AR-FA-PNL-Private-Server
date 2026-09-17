@@ -3,7 +3,9 @@ use super::runtime::{Instance, Runtime};
 use super::runtime_lamp::{heal_all, heal_self};
 use super::runtime_match::{condition, context_matches, selected_for_source_character};
 use super::runtime_panel::scale_panel_value;
-use super::runtime_resources::{add_party_gauge, apply_party_gauge_passive};
+use super::runtime_resources::{
+    add_party_gauge, apply_burst_gauge_passive, apply_party_gauge_passive,
+};
 use super::runtime_results::{effect_result, turn_state_change_result};
 use crate::state::combat::prelude::*;
 use std::collections::BTreeSet;
@@ -224,6 +226,8 @@ impl Runtime {
 
     pub(crate) fn acquire_current_panel(
         &mut self,
+        proto: &ProtoRegistry,
+        rules: &TutorialRules,
         state: &mut DynamicMessage,
     ) -> Result<(), StateError> {
         if current_battle_status(state)? != BATTLE_STATUS_IN_BATTLE {
@@ -242,12 +246,23 @@ impl Runtime {
         let actor_id = member_id(&current_actor(state)?)?;
         let panel_rate = self.panel_effect_rate(state)?;
         self.trigger_panel_lamps(state, actor_id)?;
+        let mut applied = BTreeSet::new();
         for passive in self.passives.iter().filter(|passive| {
             passive.source == actor_id
-                && passive.rule.operation == "party_gauge"
                 && passive.rule.trigger.as_deref() == Some("panel_acquired")
         }) {
-            add_party_gauge(state, passive.value)?;
+            if !applied.insert((passive.source, passive.rule.owner_id, passive.rule.id)) {
+                continue;
+            }
+            match passive.rule.operation.as_str() {
+                "party_gauge" => {
+                    add_party_gauge(state, passive.value)?;
+                }
+                "burst_gauge" => {
+                    apply_burst_gauge_passive(proto, rules, state, passive)?;
+                }
+                _ => return Err(StateError::InvalidRequest),
+            }
         }
         let actor_type = member_type(&current_actor(state)?)?;
         let panel_id = effective_battle_panel_id(state);
@@ -303,14 +318,23 @@ impl Runtime {
             .ok_or(StateError::InvalidRequest)?;
         let source_type = member_type(source)?;
         let mut triggered = Vec::new();
+        let mut applied = BTreeSet::new();
         for passive in self.passives.clone().into_iter().filter(|passive| {
-            passive.rule.trigger.as_deref() == Some("action_after")
-                && match passive.rule.target.as_str() {
+            match passive.rule.trigger.as_deref() {
+                Some("action_after") => match passive.rule.target.as_str() {
                     "self" => passive.source == source_id,
                     "allies" => passive.source_type == source_type,
                     _ => false,
-                }
+                },
+                Some("party_action_after") => passive.source_type == source_type,
+                _ => false,
+            }
         }) {
+            if matches!(passive.rule.operation.as_str(), "party_gauge" | "burst_gauge")
+                && !applied.insert((passive.source, passive.rule.owner_id, passive.rule.id))
+            {
+                continue;
+            }
             match passive.rule.operation.as_str() {
                 "bomb_gauge" => {
                     let maximum = rules.constants.max_bomb_gauge;
@@ -346,6 +370,9 @@ impl Runtime {
                 "party_gauge" => {
                     triggered.push(apply_party_gauge_passive(proto, state, &passive)?)
                 }
+                "burst_gauge" => triggered.push(apply_burst_gauge_passive(
+                    proto, rules, state, &passive,
+                )?),
                 _ => return Err(StateError::InvalidRequest),
             }
         }
