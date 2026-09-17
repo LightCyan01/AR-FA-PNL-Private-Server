@@ -8,6 +8,7 @@ mod maintenance;
 mod modifiers;
 mod nested;
 mod panels;
+mod passive_shapes;
 mod penetration;
 mod scaling;
 mod skill_context;
