@@ -1,5 +1,6 @@
 mod caps;
 mod break_effects;
+mod compound_defense;
 mod cover;
 mod critical_status;
 mod initiative;
