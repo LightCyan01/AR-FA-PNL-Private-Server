@@ -447,7 +447,11 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                 || r
                     .affected_state_ids
                     .iter()
-                    .any(|id| !data.abnormal_state_ids.contains(id))
+                    .any(|id| {
+                        *id <= 0
+                            || (r.operation == "abnormal_resistance"
+                                && !data.abnormal_state_ids.contains(id))
+                    })
                 || r.skill_types.iter().any(|id| !matches!(id, 1..=3))
                 || r.skill_target_types.iter().any(|id| !matches!(id, 1..=6))
                 || r.attack_attributes

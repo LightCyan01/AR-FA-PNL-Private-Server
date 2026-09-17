@@ -582,12 +582,18 @@ impl Runtime {
                         "cleanse_positive" => &registry()?.removable_positive_state_ids,
                         _ => unreachable!(),
                     };
+                    let can_remove = |state_id| {
+                        removable.contains(&state_id)
+                            && (rule.affected_state_ids.is_empty()
+                                || rule.affected_state_ids.contains(&state_id))
+                    };
                     let mut removed = Vec::new();
                     let mut changes = message_list(&members[target_index], "state_changes");
                     changes.retain(|change| {
                         if removed.len() < limit
-                            && removable
-                            .contains(&i32_field(change, "state_change_id").unwrap_or_default())
+                            && can_remove(
+                                i32_field(change, "state_change_id").unwrap_or_default(),
+                            )
                         {
                             removed.push(Value::Message(change.clone()));
                             false
@@ -608,10 +614,10 @@ impl Runtime {
                         members[target_index].set_field_by_name("is_stun", Value::Bool(false));
                     }
                     self.instances.retain(|instance| {
-                        instance.target != target_id || !removable.contains(&instance.rule.state_id)
+                        instance.target != target_id || !can_remove(instance.rule.state_id)
                     });
                     if let Some(managed) = self.managed.get_mut(&target_id) {
-                        managed.retain(|state_id| !removable.contains(state_id));
+                        managed.retain(|state_id| !can_remove(*state_id));
                     }
                     let mut result = effect_result(
                         proto, effect.id, source_id, target_id, is_skill, rule, value,

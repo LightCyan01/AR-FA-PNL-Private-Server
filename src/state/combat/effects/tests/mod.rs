@@ -14,6 +14,7 @@ mod penetration;
 mod poison_stacks;
 mod scaling;
 mod skill_context;
+mod specific_cleanse;
 mod status_catalog;
 mod statuses;
 mod summons;
