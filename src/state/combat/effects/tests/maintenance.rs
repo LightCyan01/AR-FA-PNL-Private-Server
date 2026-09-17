@@ -755,6 +755,31 @@ fn skill_form_effect_replaces_the_selected_skill() {
 
 #[test]
 fn immunity_states_block_only_their_effect_category() {
+    for (effect_id, target, duration) in [
+        (91001022, "self", 1),
+        (91001392, "allies", 1),
+        (91001518, "targets", 2),
+    ] {
+        let rule = rule_for(effect_id, "active", "skill", 0)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                rule.operation.as_str(),
+                rule.target.as_str(),
+                rule.state_id,
+                &rule.expiry,
+                rule.duration,
+            ),
+            (
+                "negative_immunity",
+                target,
+                910002,
+                &Expiry::Turn,
+                duration,
+            )
+        );
+    }
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../schemas/atelier-resleriana-2.16.0.protoset"
