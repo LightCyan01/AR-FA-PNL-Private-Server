@@ -714,13 +714,20 @@ fn direct_gauge_effects_update_state_and_protocol_results() {
 }
 
 #[test]
-fn skill_form_effect_replaces_the_selected_skill() {
+fn skill_form_effect_replaces_the_selected_skill_without_flagging_metadata() {
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../schemas/atelier-resleriana-2.16.0.protoset"
     )))
     .unwrap();
     let rules = load_gameplay_rules().unwrap();
+    let effects = rules
+        .skills
+        .iter()
+        .find(|skill| skill.id == 11002386)
+        .unwrap()
+        .effects
+        .clone();
     let fresh = load_fresh_rules().unwrap();
     let opened = reduce_talk_event(
         &proto,
@@ -765,10 +772,7 @@ fn skill_form_effect_replaces_the_selected_skill() {
             &mut state,
             source,
             11002386,
-            &[TutorialSkillEffect {
-                id: 91001607,
-                value: 0,
-            }],
+            &effects,
             &[],
             true,
             "after",
@@ -779,7 +783,10 @@ fn skill_form_effect_replaces_the_selected_skill() {
             1,
         )
         .unwrap();
-    assert_eq!(i32_field(&results[0], "effect_id"), Some(91001607));
+    assert!(results
+        .iter()
+        .any(|result| i32_field(result, "effect_id") == Some(91001607)));
+    assert!(!runtime.unsupported.contains(&91001610));
     let member = message_list(&state, "members")
         .into_iter()
         .find(|member| member_id(member).ok() == Some(source))
