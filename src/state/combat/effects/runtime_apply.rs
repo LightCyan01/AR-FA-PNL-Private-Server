@@ -354,6 +354,9 @@ impl Runtime {
                 continue;
             }
             if rule.operation == "panel_convert" {
+                if rule.target_broken && !requested_target_broken {
+                    continue;
+                }
                 let context = panel_context.unwrap_or(state);
                 let context_members = message_list(context, "members");
                 let units = message_list(context, "timeline_units");

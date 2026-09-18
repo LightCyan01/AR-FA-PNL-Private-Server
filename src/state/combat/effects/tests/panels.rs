@@ -48,6 +48,133 @@ fn shared_enemy_panel_rules_keep_catalog_target_and_limit() {
 }
 
 #[test]
+fn broken_target_panel_conversion_waits_for_break_and_runs_after_attack() {
+    for skill_id in (12002643..=12002647)
+        .chain(12002664..=12002668)
+        .chain(12002983..=12002987)
+    {
+        let rule = rule_for(91001657, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                rule.target.as_str(),
+                rule.phase.as_str(),
+                rule.panel_to_id,
+                rule.panel_limit,
+                rule.target_broken,
+            ),
+            ("self", "after", 14, 1, true)
+        );
+    }
+
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let rules = load_gameplay_rules().unwrap();
+    let fresh = load_fresh_rules().unwrap();
+    let resources = reduce_talk_event(
+        &proto,
+        &fresh,
+        &rules,
+        starter_resources(&proto, &fresh).unwrap(),
+        101001001,
+        1,
+    )
+    .unwrap()
+    .resources;
+    let start = reduce_battle_start(&proto, &rules, resources, 101001002, 1).unwrap();
+    let mut state = start.state;
+    let source_id = message_list(&state, "members")
+        .iter()
+        .find(|member| member_type(member).ok() == Some(0))
+        .and_then(|member| i32_field(member, "member_id"))
+        .unwrap();
+    let target_id = message_list(&state, "members")
+        .iter()
+        .find(|member| member_type(member).ok() == Some(1))
+        .and_then(|member| i32_field(member, "member_id"))
+        .unwrap();
+    let units = [(source_id, 1), (target_id, 1), (source_id, 2)]
+        .into_iter()
+        .enumerate()
+        .map(|(wait, (member_id, number))| {
+            Value::Message(build_timeline_unit(&proto, member_id, number, wait as i32).unwrap())
+        })
+        .collect();
+    state.set_field_by_name("timeline_units", Value::List(units));
+    set_timeline_panels(&proto, &mut state, &[11, 11, 11], 3, 1).unwrap();
+    let panel_context = state.clone();
+    let effect = [TutorialSkillEffect {
+        id: 91001657,
+        value: 100,
+    }];
+    let mut runtime = start.effects;
+    assert!(runtime
+        .apply_for_action_with_rules(
+            &proto,
+            &rules,
+            &mut state,
+            source_id,
+            12002664,
+            &effect,
+            &[target_id],
+            true,
+            "after",
+            Some(&panel_context),
+            10_000,
+            b"broken-panel-test",
+            &start.start_txid,
+            1,
+        )
+        .unwrap()
+        .is_empty());
+    let mut members = message_list(&state, "members");
+    let target = members
+        .iter_mut()
+        .find(|member| i32_field(member, "member_id") == Some(target_id))
+        .unwrap();
+    let mut enemy = member_status(target, "enemy").unwrap();
+    enemy.set_field_by_name("is_broken", Value::Bool(true));
+    target.set_field_by_name("enemy", Value::Message(enemy));
+    state.set_field_by_name(
+        "members",
+        Value::List(members.into_iter().map(Value::Message).collect()),
+    );
+    assert_eq!(
+        runtime
+            .apply_for_action_with_rules(
+                &proto,
+                &rules,
+                &mut state,
+                source_id,
+                12002664,
+                &effect,
+                &[target_id],
+                true,
+                "after",
+                Some(&panel_context),
+                10_000,
+                b"broken-panel-test",
+                &start.start_txid,
+                2,
+            )
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        message_list(&state, "timeline_panels")
+            .iter()
+            .map(|panel| optional_i32_field(panel, "panel_id").unwrap_or(11))
+            .collect::<Vec<_>>(),
+        vec![11, 11, 14]
+    );
+}
+
+#[test]
 fn panel_disable_suppresses_non_burst_panel_for_one_target_turn() {
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
