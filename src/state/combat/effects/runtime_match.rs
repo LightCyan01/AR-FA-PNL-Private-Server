@@ -211,6 +211,7 @@ fn selected_for_source_character_with_condition_target(
     targets: &[i32],
 ) -> bool {
     let id = i32_field(target, "member_id").unwrap_or(0);
+    let source_id = i32_field(source, "member_id").unwrap_or(0);
     let recipient_matches = match rule.target.as_str() {
         "self" => Some(id) == i32_field(source, "member_id"),
         "allies" => member_type(source).ok() == member_type(target).ok(),
@@ -224,9 +225,19 @@ fn selected_for_source_character_with_condition_target(
         && target_condition(rule, condition_target)
         && (rule.source_character_ids.is_empty()
             || rule.source_character_ids.contains(&source_character_id))
-        && (rule.target_character_ids.is_empty()
-            || message_i32_field(target, "ally", "character_id")
-                .is_some_and(|id| rule.target_character_ids.contains(&id)))
+        && target_character_matches(rule, source_id, id, target)
+}
+
+fn target_character_matches(
+    rule: &Rule,
+    source_id: i32,
+    target_id: i32,
+    target: &DynamicMessage,
+) -> bool {
+    rule.target_character_ids.is_empty()
+        || (rule.include_source && source_id == target_id)
+        || message_i32_field(target, "ally", "character_id")
+            .is_some_and(|id| rule.target_character_ids.contains(&id))
 }
 
 pub(super) fn state_application_blocked(
@@ -326,9 +337,7 @@ pub(super) fn contextual_recipient(passive: &Passive, target: &DynamicMessage) -
         _ => false,
     };
     recipient_matches
-        && (passive.rule.target_character_ids.is_empty()
-            || message_i32_field(target, "ally", "character_id")
-                .is_some_and(|id| passive.rule.target_character_ids.contains(&id)))
+        && target_character_matches(&passive.rule, passive.source, target_id, target)
         // Contextual owner-H.P. conditions need the owner's message.  Current
         // compiled contextual rules are unconditional; keep unknown forms off
         // rather than evaluating them against the wrong party member.

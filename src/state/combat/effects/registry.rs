@@ -157,6 +157,8 @@ pub(crate) struct Rule {
     #[serde(default)]
     pub(crate) target_character_ids: Vec<i32>,
     #[serde(default)]
+    pub(crate) include_source: bool,
+    #[serde(default)]
     pub(crate) source_character_ids: Vec<i32>,
     #[serde(default)]
     pub(crate) required_ability_id: i32,
@@ -525,6 +527,8 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                     && r.source_side_count_max < r.source_side_count_min)
                 || (r.expiry != Expiry::Permanent && (r.duration <= 0 || r.state_id <= 0))
                 || r.target_character_ids.iter().any(|id| *id <= 0)
+                || (r.include_source
+                    && (r.target != "allies" || r.target_character_ids.is_empty()))
                 || r.source_character_ids.iter().any(|id| *id <= 0)
                 || r.required_ability_id < 0
                 || (r.required_ability_id > 0

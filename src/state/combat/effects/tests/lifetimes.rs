@@ -75,6 +75,42 @@ fn compound_evasion_skills_bind_only_the_evasion_effect() {
 }
 
 #[test]
+fn evasion_rules_preserve_inherited_and_filtered_recipients() {
+    let inherited = rule_for(91001696, "active", "skill", 12003150)
+        .unwrap()
+        .unwrap();
+    assert_eq!(inherited.target, "self");
+
+    let filtered = rule_for(91001696, "active", "skill", 14003793)
+        .unwrap()
+        .unwrap();
+    assert_eq!(filtered.target, "allies");
+    assert!(filtered.include_source);
+    assert!(!filtered.target_character_ids.is_empty());
+
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let member = |member_id, member_type, character_id| {
+        let mut member = empty_message(&proto, "blend.model.BattleMember").unwrap();
+        member.set_field_by_name("member_id", Value::I32(member_id));
+        member.set_field_by_name("type", Value::EnumNumber(member_type));
+        let mut ally = empty_message(&proto, "blend.model.BattleAlly").unwrap();
+        ally.set_field_by_name("character_id", Value::I32(character_id));
+        member.set_field_by_name("ally", Value::Message(ally));
+        member
+    };
+    let source = member(1, 0, -1);
+    let defender = member(2, 0, filtered.target_character_ids[0]);
+    let other = member(3, 0, -2);
+    assert!(selected(filtered, &source, &source, &[]));
+    assert!(selected(filtered, &source, &defender, &[]));
+    assert!(!selected(filtered, &source, &other, &[]));
+}
+
+#[test]
 fn combat_effects_persist_expire_and_preserve_conditional_passives() {
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
