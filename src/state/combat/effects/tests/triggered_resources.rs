@@ -322,3 +322,81 @@ fn shared_burst_gauge_rules_follow_events_without_duplicate_gains() {
         .unwrap();
     assert_eq!(burst_gauge(&state, actor_id), 25);
 }
+
+#[test]
+fn party_tool_modifier_requires_its_named_character_and_expires_with_the_rule() {
+    let rule = rule_for_occurrence(6001208, "passive", "ability", 301303, Some(0))
+        .unwrap()
+        .unwrap()
+        .clone();
+    assert_eq!(
+        (
+            rule.operation.as_str(),
+            rule.summary,
+            rule.trigger.as_deref(),
+            &rule.expiry,
+            rule.duration,
+            rule.source_character_ids.as_slice(),
+        ),
+        ("summary", 4, Some("party_tool_after"), &Expiry::Turn, 1, [60101].as_slice())
+    );
+    assert_eq!(
+        rule_for(6001207, "catalog", "skill", 3020)
+            .unwrap()
+            .unwrap()
+            .operation,
+        "marker"
+    );
+
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let rules = load_gameplay_rules().unwrap();
+    let fresh = load_fresh_rules().unwrap();
+    let opened = reduce_talk_event(
+        &proto,
+        &fresh,
+        &rules,
+        starter_resources(&proto, &fresh).unwrap(),
+        101001001,
+        1,
+    )
+    .unwrap();
+    let start = reduce_battle_start(&proto, &rules, opened.resources, 101001002, 1).unwrap();
+    let mut state = start.state;
+    let actor_id = member_id(&current_actor(&state).unwrap()).unwrap();
+    let mut runtime = Runtime::default();
+    runtime.prepare(&state, "party-tool-modifier").unwrap();
+    runtime.passives.push(Passive {
+        source: actor_id,
+        value: 4_000,
+        rule,
+        source_character_id: 1,
+        source_type: 0,
+    });
+
+    assert!(runtime
+        .trigger_party_tool_effects(&proto, &rules, &mut state)
+        .unwrap()
+        .is_empty());
+    runtime.passives[0].source_character_id = 60101;
+    let results = runtime
+        .trigger_party_tool_effects(&proto, &rules, &mut state)
+        .unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(runtime.instances.len(), 1);
+    assert_eq!(runtime.instances[0].remaining, 1);
+    let actor = message_list(&state, "members")
+        .into_iter()
+        .find(|member| member_id(member).ok() == Some(actor_id))
+        .unwrap();
+    assert_eq!(
+        message_list(&actor, "state_change_summaries")
+            .into_iter()
+            .find(|summary| i32_field(summary, "id") == Some(4))
+            .and_then(|summary| i32_field(&summary, "value")),
+        Some(4_000)
+    );
+}

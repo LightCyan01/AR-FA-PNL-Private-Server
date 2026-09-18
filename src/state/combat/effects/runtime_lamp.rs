@@ -1,6 +1,8 @@
 use super::registry::{registry, LampAbilityRule, Rule};
-use super::runtime::Runtime;
+use super::runtime::{Instance, Runtime};
+use super::runtime_match::{condition, selected_for_source_character};
 use super::runtime_resources::{apply_burst_gauge_passive, apply_party_gauge_passive};
+use super::runtime_results::effect_result;
 use crate::state::combat::prelude::*;
 use std::collections::BTreeSet;
 
@@ -267,7 +269,7 @@ impl Runtime {
     }
 
     pub(crate) fn trigger_party_tool_effects(
-        &self,
+        &mut self,
         proto: &ProtoRegistry,
         rules: &TutorialRules,
         state: &mut DynamicMessage,
@@ -294,10 +296,34 @@ impl Runtime {
             }
         }
         let mut applied = BTreeSet::new();
-        for passive in self.passives.iter().filter(|passive| {
+        let passives = self.passives.iter().filter(|passive| {
             passive.rule.trigger.as_deref() == Some("party_tool_after")
-        }) {
-            if matches!(passive.rule.operation.as_str(), "party_gauge" | "burst_gauge")
+        }).cloned().collect::<Vec<_>>();
+        let members = message_list(state, "members");
+        let mut refresh = false;
+        for passive in &passives {
+            let Some(source) = members
+                .iter()
+                .find(|member| i32_field(member, "member_id") == Some(passive.source))
+            else {
+                continue;
+            };
+            if !bool_field(source, "is_alive")
+                || !condition(&passive.rule, source)
+                || !selected_for_source_character(
+                    &passive.rule,
+                    source,
+                    passive.source_character_id,
+                    source,
+                    &[],
+                )
+            {
+                continue;
+            }
+            if matches!(
+                passive.rule.operation.as_str(),
+                "summary" | "party_gauge" | "burst_gauge"
+            )
                 && !applied.insert((passive.source, passive.rule.owner_id, passive.rule.id))
             {
                 continue;
@@ -316,8 +342,40 @@ impl Runtime {
                 "burst_gauge" => results.push(apply_burst_gauge_passive(
                     proto, rules, state, passive,
                 )?),
+                "summary" => {
+                    self.instances.retain(|instance| {
+                        !(instance.source == passive.source
+                            && instance.target == passive.source
+                            && instance.rule.id == passive.rule.id)
+                    });
+                    self.instances.push(Instance {
+                        source: passive.source,
+                        source_character_id: passive.source_character_id,
+                        target: passive.source,
+                        value: passive.value,
+                        remaining: passive.rule.duration,
+                        rule: passive.rule.clone(),
+                    });
+                    self.managed
+                        .entry(passive.source)
+                        .or_default()
+                        .insert(passive.rule.state_id);
+                    results.push(effect_result(
+                        proto,
+                        passive.rule.id,
+                        passive.source,
+                        passive.source,
+                        false,
+                        &passive.rule,
+                        passive.value,
+                    )?);
+                    refresh = true;
+                }
                 _ => return Err(StateError::InvalidRequest),
             }
+        }
+        if refresh {
+            self.refresh(proto, state)?;
         }
         Ok(results)
     }
