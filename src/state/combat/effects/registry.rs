@@ -151,6 +151,8 @@ pub(crate) struct Rule {
     #[serde(default)]
     pub(crate) source_state_ids: Vec<i32>,
     #[serde(default)]
+    pub(crate) source_state_level_min: i32,
+    #[serde(default)]
     pub(crate) affected_state_ids: Vec<i32>,
     #[serde(default)]
     pub(crate) skill_types: Vec<i32>,
@@ -160,6 +162,8 @@ pub(crate) struct Rule {
     pub(crate) attack_attributes: Vec<i32>,
     #[serde(default)]
     pub(crate) critical_only: bool,
+    #[serde(default)]
+    pub(crate) trigger_limit: i32,
     #[serde(default)]
     pub(crate) weak_only: bool,
     #[serde(default)]
@@ -356,6 +360,7 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                         | "cover"
                         | "initiative"
                         | "timeline_shift"
+                        | "extra_turn"
                         | "healing"
                         | "healing_received"
                         | "heal"
@@ -391,6 +396,7 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                             | "skill_form"
                             | "action_reroll"
                             | "timeline_shift"
+                            | "extra_turn"
                             | "heal"
                             | "party_gauge"
                             | "burst_gauge"
@@ -405,6 +411,17 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                 || (r.operation == "field_effect" && r.fixed.is_none_or(|id| id <= 0))
                 || (r.operation == "summons" && r.fixed.is_none_or(|id| id <= 0))
                 || (r.operation == "skill_form" && r.fixed.is_some_and(|id| id <= 0))
+                || (r.operation == "extra_turn"
+                    && (r.mode != "active"
+                        || r.target != "self"
+                        || r.phase != "after"
+                        || r.owner_type != "skill"
+                        || r.fixed.is_none_or(|id| id <= 0)
+                        || r.duration <= 0
+                        || r.expiry != Expiry::Permanent
+                        || r.trigger_limit < 0
+                        || r.source_state_level_min < 0
+                        || (r.source_state_level_min > 0 && r.source_state_ids.len() != 1)))
                 || (r.operation == "skill_damage_scale"
                     && (r.mode != "instant"
                         || !matches!(r.summary, 1 | 3)

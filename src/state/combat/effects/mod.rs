@@ -10,6 +10,7 @@ mod runtime;
 mod runtime_apply;
 mod runtime_cover;
 mod runtime_critical;
+mod runtime_extra_turn;
 mod runtime_form;
 mod runtime_lamp;
 mod runtime_levels;

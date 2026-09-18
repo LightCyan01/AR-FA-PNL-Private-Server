@@ -45,6 +45,8 @@ pub(super) fn condition(rule: &Rule, source: &DynamicMessage) -> bool {
             || message_list(source, "state_changes").iter().any(|change| {
                 rule.source_state_ids
                     .contains(&i32_field(change, "state_change_id").unwrap_or_default())
+                    && optional_i32_field(change, "level").unwrap_or_default()
+                        >= rule.source_state_level_min
             }))
 }
 

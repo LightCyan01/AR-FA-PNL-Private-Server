@@ -316,6 +316,11 @@ pub(crate) fn build_action_setup(
         Value::Message(empty_message(proto, "blend.model.BattleTimelineResult")?),
     );
     if actor_type == 0 {
+        let is_extra_turn = runtime
+            .map(|runtime| runtime.current_extra_skill(&state))
+            .transpose()?
+            .flatten()
+            .is_some();
         setup.set_field_by_name(
             "skill_selections",
             Value::List(
@@ -325,7 +330,10 @@ pub(crate) fn build_action_setup(
                     .collect(),
             ),
         );
-        if i32_field(&state, "party_gauge").unwrap_or_default() >= rules.constants.max_party_gauge {
+        if !is_extra_turn
+            && i32_field(&state, "party_gauge").unwrap_or_default()
+                >= rules.constants.max_party_gauge
+        {
             let battle_tool_selections =
                 build_battle_tool_selections(proto, rules, &state, runtime)?;
             setup.set_field_by_name(
@@ -355,7 +363,10 @@ pub(crate) fn build_action_setup(
                 ),
             );
         }
-        if i32_field(&state, "bomb_gauge").unwrap_or_default() >= rules.constants.max_bomb_gauge {
+        if !is_extra_turn
+            && i32_field(&state, "bomb_gauge").unwrap_or_default()
+                >= rules.constants.max_bomb_gauge
+        {
             setup.set_field_by_name(
                 "ship_tool_selections",
                 Value::List(
@@ -366,15 +377,19 @@ pub(crate) fn build_action_setup(
                 ),
             );
         }
-        setup.set_field_by_name(
-            "active_skill_selections",
-            Value::List(
-                build_active_skill_selections(proto, rules, &state, actor_id, resources, runtime)?
+        if !is_extra_turn {
+            setup.set_field_by_name(
+                "active_skill_selections",
+                Value::List(
+                    build_active_skill_selections(
+                        proto, rules, &state, actor_id, resources, runtime,
+                    )?
                     .into_iter()
                     .map(Value::Message)
                     .collect(),
-            ),
-        );
+                ),
+            );
+        }
     }
     Ok(setup)
 }
@@ -611,6 +626,31 @@ pub(crate) fn build_skill_selections(
         .into_iter()
         .find(|member| i32_field(member, "member_id") == Some(actor_id))
         .ok_or(StateError::InvalidRequest)?;
+    if let Some(skill_id) = runtime
+        .map(|runtime| runtime.current_extra_skill(state))
+        .transpose()?
+        .flatten()
+    {
+        let skill = rule_skill(rules, skill_id)?;
+        if skill.skill_type != 0 {
+            return Err(StateError::TutorialRules(format!(
+                "extra skill {skill_id} has type {}",
+                skill.skill_type
+            )));
+        }
+        let (target_type, targets) = build_character_selection_targets(
+            proto, rules, state, actor_id, skill, resources, runtime,
+        )?;
+        if targets.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut selection = empty_message(proto, "blend.model.BattleSelectionSkill")?;
+        selection.set_field_by_name("skill_type", Value::I32(0));
+        selection.set_field_by_name("skill_id", Value::I32(skill_id));
+        selection.set_field_by_name("is_all", Value::Bool(matches!(target_type, 4 | 5)));
+        selection.set_field_by_name("targets", Value::List(targets));
+        return Ok(vec![selection]);
+    }
     let burst_enabled = member_status(&actor, "burst_gauge")
         .ok()
         .and_then(|gauge| i32_field(&gauge, "current_gauge"))

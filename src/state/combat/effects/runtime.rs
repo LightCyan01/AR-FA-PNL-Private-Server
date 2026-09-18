@@ -48,6 +48,13 @@ pub(crate) struct PendingAction {
     pub(crate) burst_gauge_cost: i32,
 }
 
+#[derive(Clone, Copy)]
+pub(super) struct PendingExtraTurn {
+    pub(super) source_id: i32,
+    pub(super) skill_id: i32,
+    pub(super) slots: i32,
+}
+
 #[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub(crate) struct Runtime {
@@ -61,6 +68,10 @@ pub(crate) struct Runtime {
     pub(crate) passives: Vec<Passive>,
     pub(crate) lamp_abilities: BTreeMap<i32, BTreeSet<i32>>,
     pub(crate) nested_actions: Vec<NestedActionInstance>,
+    pub(crate) extra_skills: BTreeMap<i32, BTreeMap<i32, i32>>,
+    pub(crate) extra_turn_uses: BTreeMap<i32, BTreeMap<i32, i32>>,
+    #[serde(skip)]
+    pub(super) pending_extra_turns: Vec<PendingExtraTurn>,
     pub(crate) managed: BTreeMap<i32, BTreeSet<i32>>,
     pub(crate) unsupported: BTreeSet<i32>,
     pub(crate) panel_damage_taken: BTreeMap<i32, i32>,

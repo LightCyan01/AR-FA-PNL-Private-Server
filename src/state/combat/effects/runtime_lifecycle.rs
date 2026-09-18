@@ -306,6 +306,9 @@ impl Runtime {
             self.passives.retain(|p| allies.contains(&p.source));
             self.nested_actions
                 .retain(|action| allies.contains(&action.target));
+            self.extra_skills.retain(|id, _| allies.contains(id));
+            self.extra_turn_uses.retain(|id, _| allies.contains(id));
+            self.pending_extra_turns.clear();
             self.panel_damage_taken.retain(|id, _| allies.contains(id));
             self.pending_actor = 0;
             self.pending_blind_rate = 0;

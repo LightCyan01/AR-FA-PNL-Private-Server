@@ -666,6 +666,9 @@ pub(crate) fn consume_timeline_turn(
     preserve_future_turns: bool,
 ) -> Result<DynamicMessage, StateError> {
     sort_timeline_units(units, members);
+    if let Some(movement) = consume_extra_timeline_turn(proto, units, members, id)? {
+        return Ok(movement);
+    }
     let from_index = units
         .iter()
         .position(|unit| i32_field(unit, "member_id") == Some(id))

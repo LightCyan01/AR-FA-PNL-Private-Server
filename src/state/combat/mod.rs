@@ -6,6 +6,7 @@ pub(crate) mod effects;
 mod lifecycle;
 mod model;
 mod timeline;
+mod timeline_extra;
 
 pub(crate) use actions::*;
 pub(crate) use attack::*;
@@ -14,7 +15,9 @@ pub(crate) use model::*;
 pub(crate) use timeline::*;
 
 pub(crate) mod prelude {
-    pub(crate) use super::{actions::*, attack::*, lifecycle::*, model::*, timeline::*};
+    pub(crate) use super::{
+        actions::*, attack::*, lifecycle::*, model::*, timeline::*, timeline_extra::*,
+    };
     pub(crate) use crate::state::service::prelude::*;
 }
 

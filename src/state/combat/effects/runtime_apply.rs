@@ -416,6 +416,20 @@ impl Runtime {
                 );
                 continue;
             }
+            if rule.operation == "extra_turn" {
+                if self.queue_extra_turn(source_id, skill_id, rule)? {
+                    results.push(effect_result(
+                        proto,
+                        effect.id,
+                        source_id,
+                        source_id,
+                        is_skill,
+                        rule,
+                        effect.value,
+                    )?);
+                }
+                continue;
+            }
             let mut value = amount(rule, effect.value)?;
             if !rule.scale_by.is_empty() {
                 let scale_count = match rule.scale_by.as_str() {

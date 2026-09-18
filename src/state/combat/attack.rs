@@ -577,7 +577,7 @@ fn resolve_skill_action(
             action_number,
         )?);
     }
-    let (skill_results, timeline_moves, total_damage) = apply_attack_results(
+    let (skill_results, mut timeline_moves, total_damage) = apply_attack_results(
         proto,
         rules,
         state,
@@ -596,6 +596,13 @@ fn resolve_skill_action(
         transaction,
         action_number,
     )?;
+    for target_id in skill_results
+        .iter()
+        .filter(|result| bool_field(result, "is_killed"))
+        .filter_map(|result| i32_field(result, "target_id"))
+    {
+        runtime.discard_extra_turns(target_id);
+    }
     runtime.expire_with_attributes(
         actor_id,
         &skill_results,
@@ -671,6 +678,7 @@ fn resolve_skill_action(
             }
         }
     }
+    timeline_moves.extend(runtime.apply_pending_extra_turns(proto, state)?);
     runtime.refresh(proto, state)?;
     Ok(ResolvedSkillAction {
         skill_results,
@@ -963,14 +971,26 @@ pub(crate) fn reduce_battle_attack_with_effects(
             let skill_type = i32_field(&command, "skill_type").ok_or(StateError::InvalidRequest)?;
             let target_id =
                 i32_field(&command, "main_target_id").ok_or(StateError::InvalidRequest)?;
-            if !(1..=3).contains(&skill_type) {
-                return Err(StateError::InvalidRequest);
-            }
-            let selected = member_skills(&actor)?
-                .into_iter()
-                .find(|selected| selected.skill_type == skill_type)
-                .ok_or(StateError::InvalidRequest)?;
-            let selected_skill = rule_skill(rules, selected.id)?;
+            let extra_skill_id = effect_runtime.current_extra_skill(&state)?;
+            let selected_skill = if skill_type == 0 {
+                let skill = rule_skill(
+                    rules,
+                    extra_skill_id.ok_or(StateError::InvalidRequest)?,
+                )?;
+                if skill.skill_type != 0 {
+                    return Err(StateError::InvalidRequest);
+                }
+                skill
+            } else {
+                if extra_skill_id.is_some() || !(1..=3).contains(&skill_type) {
+                    return Err(StateError::InvalidRequest);
+                }
+                let selected = member_skills(&actor)?
+                    .into_iter()
+                    .find(|selected| selected.skill_type == skill_type)
+                    .ok_or(StateError::InvalidRequest)?;
+                rule_skill(rules, selected.id)?
+            };
             if selected_skill.skill_target_type == Some(3)
                 && effect_runtime
                     .provocation_target(actor_id)
@@ -990,6 +1010,11 @@ pub(crate) fn reduce_battle_attack_with_effects(
                 panel_only_burst = current
                     < rules.constants.burst_gauge_required_for_one_burst_skill
                     && is_burst_panel_id(panel_id);
+            }
+            if skill_type == 0 {
+                effect_runtime
+                    .take_current_extra_skill(&state)?
+                    .ok_or(StateError::InvalidRequest)?;
             }
             action_specs.push(ActionSpec {
                 skill: selected_skill.clone(),
@@ -1436,6 +1461,7 @@ pub(crate) fn reduce_battle_attack_with_effects(
             )?;
             let mut setup_timeline_moves = Vec::new();
             if killed {
+                effect_runtime.discard_extra_turns(actor_id);
                 let members = message_list(&state, "members");
                 let mut units = message_list(&state, "timeline_units");
                 setup_timeline_moves.extend(remove_timeline_members(
@@ -1449,6 +1475,7 @@ pub(crate) fn reduce_battle_attack_with_effects(
                     Value::List(units.into_iter().map(Value::Message).collect()),
                 );
             } else if disabled {
+                effect_runtime.take_current_extra_skill(&state)?;
                 let members = message_list(&state, "members");
                 let actor = members
                     .iter()
@@ -1539,7 +1566,12 @@ pub(crate) fn reduce_battle_attack_with_effects(
                 .ok_or(StateError::InvalidRequest)?;
             let enemy_rule = rule_enemy(rules, enemy_member_status_enemy_id(&enemy_member)?)?;
             let panel_id = current_panel_id(&state);
-            let enemy_skill_id = if is_burst_panel_id(panel_id) {
+            let enemy_skill_id = if let Some(skill_id) = effect_runtime.current_extra_skill(&state)? {
+                effect_runtime
+                    .take_current_extra_skill(&state)?
+                    .ok_or(StateError::InvalidRequest)?;
+                skill_id
+            } else if is_burst_panel_id(panel_id) {
                 enemy_rule.burst_skill_id
             } else {
                 let choices: Vec<i32> = rules
