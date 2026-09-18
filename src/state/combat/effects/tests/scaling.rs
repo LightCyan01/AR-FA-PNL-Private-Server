@@ -27,6 +27,9 @@ fn skill_damage_curves_follow_live_count_hp_and_direction() {
         (91001066, 14000671),
         (91001211, 14001077),
         (91001633, 14002426),
+        (91001615, 12002546),
+        (91002296, 12003833),
+        (91002296, 14003838),
         (91002166, 11003617),
         (91001470, 12002064),
         (91001470, 14002069),
@@ -75,6 +78,50 @@ fn skill_damage_curves_follow_live_count_hp_and_direction() {
     assert_eq!(
         scaled_skill_damage(skill(12002546), &source, 4).unwrap(),
         12_000
+    );
+    assert_eq!(
+        scaled_critical_damage(skill(12002546), &source, 1).unwrap(),
+        18_000
+    );
+    assert_eq!(
+        scaled_critical_damage(skill(12002546), &source, 4).unwrap(),
+        6_000
+    );
+    assert_eq!(
+        scaled_critical_damage(skill(12003833), &source, 1).unwrap(),
+        10_000
+    );
+    assert_eq!(
+        scaled_critical_damage(skill(14003838), &source, 1).unwrap(),
+        10_000
+    );
+    let mut critical_skill = skill(12002546).clone();
+    critical_skill.effects.retain(|effect| effect.id == 91001616);
+    assert_eq!(
+        secondary_damage(
+            15_000,
+            &source,
+            &source,
+            &critical_skill,
+            None,
+            1,
+            true,
+        )
+        .unwrap(),
+        33_000
+    );
+    assert_eq!(
+        secondary_damage(
+            15_000,
+            &source,
+            &source,
+            &critical_skill,
+            None,
+            4,
+            true,
+        )
+        .unwrap(),
+        21_000
     );
     assert_eq!(
         scaled_skill_damage(skill(14002426), &source, 1).unwrap(),
@@ -153,6 +200,14 @@ fn skill_damage_curves_follow_live_count_hp_and_direction() {
     );
     assert_eq!(
         scaled_skill_damage(skill(14002426), &source, 1).unwrap(),
+        15_000
+    );
+    assert_eq!(
+        scaled_critical_damage(skill(12003833), &source, 1).unwrap(),
+        15_000
+    );
+    assert_eq!(
+        scaled_critical_damage(skill(14003838), &source, 1).unwrap(),
         15_000
     );
     assert_eq!(

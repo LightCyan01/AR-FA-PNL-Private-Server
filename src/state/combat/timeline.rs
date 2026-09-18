@@ -520,7 +520,15 @@ pub(crate) fn policy_damage(
         critical,
         variance,
     );
-    effects::secondary_damage(base, attacker, target, skill, runtime, critical)
+    effects::secondary_damage(
+        base,
+        attacker,
+        target,
+        skill,
+        runtime,
+        opponent_count,
+        critical,
+    )
 }
 
 pub(crate) fn policy_hp_damage_bonus(

@@ -16,6 +16,14 @@ pub(crate) fn scaled_break_damage(
     scaled_skill_modifier(skill, source, 0, 3)
 }
 
+pub(crate) fn scaled_critical_damage(
+    skill: &TutorialSkill,
+    source: &DynamicMessage,
+    opponent_count: i32,
+) -> Result<i64, StateError> {
+    scaled_skill_modifier(skill, source, opponent_count, 7)
+}
+
 pub(super) fn party_tag_count(
     rules: &TutorialRules,
     members: &[DynamicMessage],

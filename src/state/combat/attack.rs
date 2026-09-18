@@ -306,6 +306,7 @@ pub(crate) fn apply_attack_results(
                 &members[target_index],
                 skill,
                 Some(runtime),
+                opponent_count,
                 critical,
             )?
         } else {

@@ -43,7 +43,9 @@ pub(crate) use runtime_cover::Protection;
 pub(crate) use runtime_lamp::{advance_skill_lamp, predicted_skill_lamp, skill_transformation};
 pub(crate) use runtime_match::selected;
 pub(crate) use runtime_results::display;
-pub(crate) use runtime_scaling::{scaled_break_damage, scaled_skill_damage};
+pub(crate) use runtime_scaling::{
+    scaled_break_damage, scaled_critical_damage, scaled_skill_damage,
+};
 pub(crate) use runtime_summary::{
     instant_break_gauge_zero, instant_summary, instant_summary_for_source, timeline_slots,
 };

@@ -647,6 +647,7 @@ fn conditional_memoria_and_equipment_follow_attack_context() {
         &wind_enemy,
         &wind,
         Some(&wind_runtime),
+        0,
         true,
     )
     .unwrap();
@@ -676,6 +677,7 @@ fn conditional_memoria_and_equipment_follow_attack_context() {
             &wind_enemy,
             &wind,
             Some(&wind_runtime),
+            0,
             true,
         )
         .unwrap()

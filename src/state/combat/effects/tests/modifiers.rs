@@ -253,24 +253,26 @@ fn skill_two_vulnerability_affects_only_skill_two_damage() {
         .clone();
     skill_two.effects.clear();
     let one_without =
-        secondary_damage(1_000_000, &source, &target, &skill_one, None, false).unwrap();
+        secondary_damage(1_000_000, &source, &target, &skill_one, None, 0, false).unwrap();
     let one_with = secondary_damage(
         1_000_000,
         &source,
         &target,
         &skill_one,
         Some(&runtime),
+        0,
         false,
     )
     .unwrap();
     let two_without =
-        secondary_damage(1_000_000, &source, &target, &skill_two, None, false).unwrap();
+        secondary_damage(1_000_000, &source, &target, &skill_two, None, 0, false).unwrap();
     let two_with = secondary_damage(
         1_000_000,
         &source,
         &target,
         &skill_two,
         Some(&runtime),
+        0,
         false,
     )
     .unwrap();

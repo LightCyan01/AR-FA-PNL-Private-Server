@@ -121,6 +121,7 @@ pub(crate) fn secondary_damage(
     target: &DynamicMessage,
     skill: &TutorialSkill,
     runtime: Option<&Runtime>,
+    opponent_count: i32,
     critical: bool,
 ) -> Result<i64, StateError> {
     let contextual = |summary| {
@@ -140,6 +141,7 @@ pub(crate) fn secondary_damage(
             + i64::from(state_change_summary_value(source, 7))
             + contextual(7)
             + instant_summary_for_source(Some(source), skill, target, critical, 7)?
+            + super::scaled_critical_damage(skill, source, opponent_count)?
             + i64::from(state_change_summary_value(target, 17)))
         .clamp(0, 1_000_000)
     } else {
