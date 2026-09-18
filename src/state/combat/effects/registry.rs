@@ -474,6 +474,9 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                         || (r.summary == 3 && r.scale_by != "source_hp")
                         || r.scale_input_min < 0
                         || r.scale_input_max < r.scale_input_min
+                        || r.fixed.is_some_and(|minimum| {
+                            minimum < 0 || minimum >= r.scale_output_max
+                        })
                         || (r.scale_input_max == r.scale_input_min
                             && (r.scale_by != "opponent_count" || r.scale_input_min == 0))
                         || (r.scale_input_max > r.scale_input_min

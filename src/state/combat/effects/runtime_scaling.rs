@@ -108,7 +108,7 @@ fn scaled_skill_modifier(
         if rule.scale_descending {
             progress = span - progress;
         }
-        let minimum_output = i64::from(effect.value);
+        let minimum_output = i64::from(rule.fixed.unwrap_or(effect.value));
         let value =
             minimum_output + (i64::from(rule.scale_output_max) - minimum_output) * progress / span;
         Ok(total.saturating_add(value))
