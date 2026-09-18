@@ -364,6 +364,7 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                         | "bomb_gauge"
                         | "break_gauge"
                         | "break_gauge_zero"
+                        | "level_state"
                         | "remove_stack"
                         | "cleanse"
                         | "cleanse_abnormal"
@@ -452,6 +453,12 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                         "skill_damage_scale" | "heal" | "summary" | "attribute_taken"
                     ))
                 || r.stack_cap < 0
+                || (r.operation == "level_state"
+                    && (r.mode != "active"
+                        || r.fixed.is_none_or(|increment| increment <= 0)
+                        || r.stack_cap <= 0
+                        || r.fixed.is_some_and(|increment| increment > r.stack_cap)
+                        || r.expiry != Expiry::Permanent))
                 || r.source_side_count_min < 0
                 || r.source_side_count_max < 0
                 || (r.source_side_count_max > 0

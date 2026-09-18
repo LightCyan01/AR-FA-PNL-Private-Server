@@ -14,6 +14,17 @@ pub(crate) fn display(
     Ok(row)
 }
 
+pub(super) fn level_display(
+    proto: &ProtoRegistry,
+    id: i32,
+    level: i32,
+    remaining: i32,
+) -> Result<DynamicMessage, StateError> {
+    let mut row = display(proto, id, 0, remaining)?;
+    row.set_field_by_name("level", Value::Message(wrapper_i32(proto, level)?));
+    Ok(row)
+}
+
 pub(super) fn effect_result(
     proto: &ProtoRegistry,
     effect_id: i32,
@@ -37,10 +48,12 @@ pub(super) fn effect_result(
             Value::Message(wrapper_i32(proto, rule.state_id)?),
         );
         result.set_field_by_name("deal_state_change_result", Value::EnumNumber(1));
-        result.set_field_by_name(
-            "dealt_state_change",
-            Value::Message(display(proto, rule.state_id, value, rule.duration)?),
-        );
+        let state_change = if rule.operation == "level_state" {
+            level_display(proto, rule.state_id, value, rule.duration)?
+        } else {
+            display(proto, rule.state_id, value, rule.duration)?
+        };
+        result.set_field_by_name("dealt_state_change", Value::Message(state_change));
     }
     Ok(result)
 }

@@ -1,8 +1,9 @@
 use super::policy::healing_amount;
-use super::registry::{registry, rule_for, Expiry, Rule};
+use super::registry::{registry, rule_for_occurrence, Expiry, Rule};
 use super::runtime::{Instance, Runtime};
 use super::runtime_form::apply_skill_form;
 use super::runtime_lamp::{is_lamp_mechanic, lamp_condition_matches};
+use super::runtime_levels::apply_level_state;
 use super::runtime_match::{
     amount, condition, contextual_recipient, selected, selected_with_condition_target,
     state_application_blocked,
@@ -168,7 +169,15 @@ impl Runtime {
             .clone();
         let mut results = Vec::new();
         for (effect_index, effect) in effects.iter().enumerate() {
-            if rule_for(effect.id, "catalog", "skill", skill_id)?.is_some() {
+            if rule_for_occurrence(
+                effect.id,
+                "catalog",
+                "skill",
+                skill_id,
+                Some(effect_index),
+            )?
+            .is_some()
+            {
                 continue;
             }
             if is_lamp_mechanic(skill_id, effect.id)? {
@@ -195,8 +204,23 @@ impl Runtime {
                     effect_index,
                 )?);
             }
-            let Some(base_rule) = rule_for(effect.id, "active", "skill", skill_id)? else {
-                if !has_nested_rule && rule_for(effect.id, "instant", "skill", skill_id)?.is_none()
+            let Some(base_rule) = rule_for_occurrence(
+                effect.id,
+                "active",
+                "skill",
+                skill_id,
+                Some(effect_index),
+            )?
+            else {
+                if !has_nested_rule
+                    && rule_for_occurrence(
+                        effect.id,
+                        "instant",
+                        "skill",
+                        skill_id,
+                        Some(effect_index),
+                    )?
+                    .is_none()
                 {
                     self.unsupported.insert(effect.id);
                 }
@@ -524,6 +548,13 @@ impl Runtime {
                     );
                     results.push(result);
                 }
+                continue;
+            }
+            if rule.operation == "level_state" {
+                results.extend(apply_level_state(
+                    self, proto, &source, &members, source_id, effect, targets, is_skill, rule,
+                    value,
+                )?);
                 continue;
             }
             if rule.operation == "remove_stack" {

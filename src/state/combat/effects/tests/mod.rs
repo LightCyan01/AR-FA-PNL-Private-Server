@@ -6,6 +6,7 @@ mod critical_status;
 mod critical_triggers;
 mod initiative;
 mod legacy_modifiers;
+mod levels;
 mod lifetimes;
 mod maintenance;
 mod modifiers;

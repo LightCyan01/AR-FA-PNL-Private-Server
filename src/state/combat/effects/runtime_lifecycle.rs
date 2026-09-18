@@ -3,7 +3,7 @@ use super::runtime::{Baseline, Instance, NestedActionInstance, Passive, Runtime}
 use super::runtime_lamp::is_lamp_ability_effect;
 use super::runtime_match::{amount, condition, contextual_rule, selected_for_source_character};
 use super::runtime_resources::add_burst_gauge;
-use super::runtime_results::display;
+use super::runtime_results::{display, level_display};
 use crate::state::combat::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -358,6 +358,7 @@ impl Runtime {
             let mut summaries = base.summaries.clone();
             let mut stat_rates = BTreeMap::<String, i64>::new();
             let mut visible = BTreeMap::<i32, (i32, i32)>::new();
+            let mut levels = BTreeMap::<i32, (i32, i32)>::new();
             let mut add = |rule: &Rule, value: i32| -> Result<(), StateError> {
                 match rule.operation.as_str() {
                     "summary" => {
@@ -427,6 +428,10 @@ impl Runtime {
                 }
             }
             for active in self.instances.iter().filter(|i| i.target == id) {
+                if active.rule.operation == "level_state" {
+                    levels.insert(active.rule.state_id, (active.value, active.remaining));
+                    continue;
+                }
                 // Application predicates are already satisfied before the instance exists.
                 if !contextual_rule(&active.rule)
                     || active.rule.trigger.is_some()
@@ -495,6 +500,9 @@ impl Runtime {
             });
             for (state_id, (value, remaining)) in visible {
                 changes.push(display(proto, state_id, value, remaining)?);
+            }
+            for (state_id, (level, remaining)) in levels {
+                changes.push(level_display(proto, state_id, level, remaining)?);
             }
             member.set_field_by_name(
                 "state_changes",
