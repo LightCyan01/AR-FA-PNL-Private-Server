@@ -119,6 +119,36 @@ fn weak_skill_modifier_applies_only_to_lowest_resistance() {
 }
 
 #[test]
+fn granted_weak_damage_buffs_keep_their_future_attack_scope() {
+    for (effect_id, skill_id, target, expiry, duration, stack_cap) in [
+        (91001593, 12003210, "self", Expiry::Turn, 2, 0),
+        (91001597, 14002336, "self", Expiry::Turn, 1, 0),
+        (91001988, 12003343, "allies", Expiry::Turn, 2, 0),
+        (91001992, 14003363, "self", Expiry::Permanent, -1, 15_000),
+        (91002234, 12003686, "self", Expiry::Turn, 3, 0),
+    ] {
+        let rule = rule_for(effect_id, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                rule.operation.as_str(),
+                rule.summary,
+                rule.target.as_str(),
+                rule.phase.as_str(),
+                &rule.expiry,
+                rule.duration,
+                rule.weak_only,
+                rule.stack_cap,
+            ),
+            (
+                "summary", 1, target, "after", &expiry, duration, true, stack_cap
+            )
+        );
+    }
+}
+
+#[test]
 fn battle_tool_role_buffs_select_only_attackers() {
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
