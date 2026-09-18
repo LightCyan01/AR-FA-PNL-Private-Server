@@ -19,6 +19,7 @@ mod runtime_match;
 mod runtime_nested;
 mod runtime_panel;
 mod runtime_potency;
+mod runtime_random;
 mod runtime_results;
 mod runtime_resources;
 mod runtime_scaling;

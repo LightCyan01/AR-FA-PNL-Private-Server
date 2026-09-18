@@ -125,6 +125,16 @@ pub(crate) struct LampAbilityRule {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct RandomModifierChoice {
+    pub(crate) operation: String,
+    pub(crate) summary: i32,
+    pub(crate) state_id: i32,
+    pub(crate) expiry: Expiry,
+    pub(crate) duration: i32,
+    pub(crate) positive: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct Rule {
     pub(crate) id: i32,
     #[serde(default)]
@@ -150,6 +160,10 @@ pub(crate) struct Rule {
     pub(crate) source_character_ids: Vec<i32>,
     #[serde(default)]
     pub(crate) required_ability_id: i32,
+    #[serde(default)]
+    pub(crate) random_draws: usize,
+    #[serde(default)]
+    pub(crate) random_choices: Vec<RandomModifierChoice>,
     #[serde(default)]
     pub(crate) source_state_ids: Vec<i32>,
     #[serde(default)]
@@ -358,6 +372,7 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                         | "skill_damage_scale"
                         | "scaling_metadata"
                         | "marker"
+                        | "random_modifier"
                         | "action_reroll"
                         | "target_rate"
                         | "cover"
@@ -400,6 +415,7 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                             | "action_reroll"
                             | "timeline_shift"
                             | "extra_turn"
+                            | "random_modifier"
                             | "heal"
                             | "party_gauge"
                             | "burst_gauge"
@@ -425,6 +441,30 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                         || r.trigger_limit < 0
                         || r.source_state_level_min < 0
                         || (r.source_state_level_min > 0 && r.source_state_ids.len() != 1)))
+                || (r.operation == "random_modifier"
+                    && (r.mode != "active"
+                        || r.target != "allies"
+                        || r.phase != "after"
+                        || r.owner_type != "skill"
+                        || r.owner_index.is_none()
+                        || r.state_id != 0
+                        || r.expiry != Expiry::Permanent
+                        || r.duration != -1
+                        || r.random_draws == 0
+                        || r.random_choices.is_empty()
+                        || r.random_choices.iter().any(|choice| {
+                            choice.state_id <= 0
+                                || choice.duration <= 0
+                                || choice.positive
+                                    != data.positive_state_ids.contains(&choice.state_id)
+                                || !matches!(choice.expiry, Expiry::Turn | Expiry::Hit)
+                                || !matches!(choice.operation.as_str(), "summary" | "taken_down")
+                                || (choice.operation == "summary"
+                                    && !(1..=36).contains(&choice.summary))
+                                || (choice.operation == "taken_down" && choice.summary != 0)
+                        })))
+                || (r.operation != "random_modifier"
+                    && (r.random_draws != 0 || !r.random_choices.is_empty()))
                 || (r.operation == "skill_damage_scale"
                     && (r.mode != "instant"
                         || !matches!(r.summary, 1 | 3)

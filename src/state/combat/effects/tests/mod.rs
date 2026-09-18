@@ -17,6 +17,7 @@ mod passive_shapes;
 mod penetration;
 mod pile;
 mod poison_stacks;
+mod random_modifiers;
 mod scaling;
 mod skill_context;
 mod specific_cleanse;

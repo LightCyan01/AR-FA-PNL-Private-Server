@@ -446,6 +446,24 @@ impl Runtime {
                 continue;
             }
             let mut value = amount(rule, effect.value)?;
+            if rule.operation == "random_modifier" {
+                let (secret, transaction, action_number) = rng.ok_or(StateError::InvalidRequest)?;
+                results.extend(self.apply_random_modifier(
+                    proto,
+                    &members,
+                    &source,
+                    source_id,
+                    effect,
+                    targets,
+                    is_skill,
+                    rule,
+                    value,
+                    secret,
+                    transaction,
+                    action_number,
+                )?);
+                continue;
+            }
             if !rule.scale_by.is_empty() {
                 let scale_count = match rule.scale_by.as_str() {
                     "opponent_count" => {
