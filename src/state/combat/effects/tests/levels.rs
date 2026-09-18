@@ -66,6 +66,39 @@ fn named_levels_increment_to_their_cap_and_use_the_protocol_level_field() {
             );
         }
     }
+    for (skill_id, base_effect_id, base_index, increment) in
+        (12003833..=12003837)
+            .map(|id| (id, 91002293, 2, 1))
+            .chain((14003838..=14003842).map(|id| (id, 91002294, 2, 2)))
+            .chain(std::iter::once((14003845, 91002295, 3, 5)))
+    {
+        let base = rule_for_occurrence(
+            base_effect_id,
+            "active",
+            "skill",
+            skill_id,
+            Some(base_index),
+        )
+        .unwrap()
+        .unwrap();
+        let bonus_index = if skill_id == 14003845 { 4 } else { 5 };
+        let bonus = rule_for_occurrence(6001303, "active", "skill", skill_id, Some(bonus_index))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (base.state_id, base.fixed, base.stack_cap),
+            (610517, Some(increment), 10)
+        );
+        assert_eq!(
+            (bonus.state_id, bonus.fixed, bonus.required_ability_id),
+            (610517, Some(1), 301354)
+        );
+    }
+    let marker = rule_for_occurrence(6001298, "passive", "ability", 301354, Some(2))
+        .unwrap()
+        .unwrap();
+    assert_eq!(marker.operation, "marker");
+    assert_eq!(marker.source_character_ids.len(), 1);
 
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -136,4 +169,66 @@ fn named_levels_increment_to_their_cap_and_use_the_protocol_level_field() {
             .map(|instance| instance.value),
         Some(10)
     );
+
+    let mut members = message_list(&state, "members");
+    let actor = members
+        .iter_mut()
+        .find(|member| member_id(member).ok() == Some(actor_id))
+        .unwrap();
+    let mut ally = member_status(actor, "ally").unwrap();
+    ally.set_field_by_name(
+        "character_id",
+        Value::I32(marker.source_character_ids[0]),
+    );
+    actor.set_field_by_name("ally", Value::Message(ally));
+    state.set_field_by_name(
+        "members",
+        Value::List(members.into_iter().map(Value::Message).collect()),
+    );
+    let lichtlumen = rules.skills.iter().find(|skill| skill.id == 12003833).unwrap();
+    runtime
+        .apply_for_action_with_rules(
+            &proto,
+            &rules,
+            &mut state,
+            actor_id,
+            lichtlumen.id,
+            &lichtlumen.effects,
+            &[target_id],
+            true,
+            "after",
+            None,
+            lichtlumen.state_change_application_rate,
+            b"level-test",
+            &transaction,
+            13,
+        )
+        .unwrap();
+    assert_eq!(level(&state, actor_id, 610517), Some(1));
+    runtime.passives.push(Passive {
+        source: actor_id,
+        value: 0,
+        rule: marker.clone(),
+        source_character_id: marker.source_character_ids[0],
+        source_type: member_type(&member(&state, actor_id)).unwrap(),
+    });
+    runtime
+        .apply_for_action_with_rules(
+            &proto,
+            &rules,
+            &mut state,
+            actor_id,
+            lichtlumen.id,
+            &lichtlumen.effects,
+            &[target_id],
+            true,
+            "after",
+            None,
+            lichtlumen.state_change_application_rate,
+            b"level-test",
+            &transaction,
+            14,
+        )
+        .unwrap();
+    assert_eq!(level(&state, actor_id, 610517), Some(3));
 }

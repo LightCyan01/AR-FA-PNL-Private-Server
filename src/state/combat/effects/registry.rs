@@ -149,6 +149,8 @@ pub(crate) struct Rule {
     #[serde(default)]
     pub(crate) source_character_ids: Vec<i32>,
     #[serde(default)]
+    pub(crate) required_ability_id: i32,
+    #[serde(default)]
     pub(crate) source_state_ids: Vec<i32>,
     #[serde(default)]
     pub(crate) source_state_level_min: i32,
@@ -484,6 +486,9 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                 || (r.expiry != Expiry::Permanent && (r.duration <= 0 || r.state_id <= 0))
                 || r.target_character_ids.iter().any(|id| *id <= 0)
                 || r.source_character_ids.iter().any(|id| *id <= 0)
+                || r.required_ability_id < 0
+                || (r.required_ability_id > 0
+                    && (r.mode != "active" || r.owner_type != "skill"))
                 || r.source_state_ids.iter().any(|id| *id <= 0)
                 || r
                     .affected_state_ids

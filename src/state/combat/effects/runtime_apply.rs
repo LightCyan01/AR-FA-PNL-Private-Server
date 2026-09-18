@@ -5,8 +5,8 @@ use super::runtime_form::apply_skill_form;
 use super::runtime_lamp::{is_lamp_mechanic, lamp_condition_matches};
 use super::runtime_levels::apply_level_state;
 use super::runtime_match::{
-    amount, condition, contextual_recipient, selected, selected_with_condition_target,
-    state_application_blocked,
+    amount, condition, contextual_recipient, selected, selected_for_source_character,
+    selected_with_condition_target, state_application_blocked,
 };
 use super::runtime_results::{display, effect_result, status_display, status_effect_result};
 use super::runtime_resources::{add_burst_gauge, add_party_gauge};
@@ -270,8 +270,23 @@ impl Runtime {
                 }
             }
             let rule = &effective_rule;
+            let required_ability = rule.required_ability_id == 0
+                || self.passives.iter().any(|passive| {
+                    passive.source == source_id
+                        && passive.rule.owner_type == "ability"
+                        && passive.rule.owner_id == rule.required_ability_id
+                        && condition(&passive.rule, &source)
+                        && selected_for_source_character(
+                            &passive.rule,
+                            &source,
+                            passive.source_character_id,
+                            &source,
+                            &[],
+                        )
+                });
             if rule.phase != phase
                 || (rule.critical_only && !critical_trigger)
+                || !required_ability
                 || !condition(rule, &source)
                 || !lamp_condition_matches(&source, skill_id, rule)?
             {
