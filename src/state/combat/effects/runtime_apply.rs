@@ -527,10 +527,13 @@ impl Runtime {
                 continue;
             }
             if rule.operation == "remove_stack" {
-                for target in members.iter().filter(|member| {
-                    bool_field(member, "is_alive") && selected(rule, &source, member, targets)
-                }) {
-                    let target_id = member_id(target)?;
+                for target_index in 0..members.len() {
+                    if !bool_field(&members[target_index], "is_alive")
+                        || !selected(rule, &source, &members[target_index], targets)
+                    {
+                        continue;
+                    }
+                    let target_id = member_id(&members[target_index])?;
                     let index = self.instances.iter().position(|instance| {
                         instance.target == target_id && instance.rule.state_id == rule.state_id
                     });
@@ -564,6 +567,17 @@ impl Runtime {
                                 instance.target == target_id
                                     && instance.rule.state_id == rule.state_id
                             }) {
+                                let mut changes =
+                                    message_list(&members[target_index], "state_changes");
+                                changes.retain(|change| {
+                                    i32_field(change, "state_change_id") != Some(rule.state_id)
+                                });
+                                members[target_index].set_field_by_name(
+                                    "state_changes",
+                                    Value::List(
+                                        changes.into_iter().map(Value::Message).collect(),
+                                    ),
+                                );
                                 self.managed
                                     .entry(target_id)
                                     .or_default()

@@ -13,6 +13,7 @@ mod nested;
 mod panels;
 mod passive_shapes;
 mod penetration;
+mod pile;
 mod poison_stacks;
 mod scaling;
 mod skill_context;
