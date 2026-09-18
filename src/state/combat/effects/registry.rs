@@ -441,7 +441,6 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                         || r.duration <= 0
                         || r.expiry != Expiry::Permanent
                         || r.trigger_limit < 0
-                        || r.source_state_level_min < 0
                         || (r.source_state_level_min > 0 && r.source_state_ids.len() != 1)))
                 || (r.operation == "random_modifier"
                     && (r.mode != "active"
@@ -536,6 +535,8 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                 || r.required_ability_id < 0
                 || (r.required_ability_id > 0
                     && (r.mode != "active" || r.owner_type != "skill"))
+                || r.source_state_level_min < 0
+                || (r.source_state_level_min > 0 && r.source_state_ids.len() != 1)
                 || r.source_state_ids.iter().any(|id| *id <= 0)
                 || r
                     .affected_state_ids

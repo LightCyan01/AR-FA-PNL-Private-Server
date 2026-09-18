@@ -8,7 +8,9 @@ use super::runtime_match::{
     amount, condition, contextual_recipient, selected, selected_for_source_character,
     selected_with_condition_target, state_application_blocked,
 };
-use super::runtime_results::{display, effect_result, status_display, status_effect_result};
+use super::runtime_results::{
+    display, effect_result, level_display, status_display, status_effect_result,
+};
 use super::runtime_resources::{add_burst_gauge, add_party_gauge};
 use super::runtime_scaling::{party_tag_count, scaled_effect_value};
 use super::runtime_targeting::resolved_targets;
@@ -629,17 +631,29 @@ impl Runtime {
                     if let Some(index) = index {
                         let previous = self.instances[index].clone();
                         let count = effect.value.saturating_div(100).max(1);
-                        let removed = rule.fixed.unwrap_or_default().saturating_mul(count);
+                        let removed = rule
+                            .fixed
+                            .map_or(previous.value, |value| value.saturating_mul(count));
                         if previous.value <= removed {
                             self.instances.remove(index);
-                            result.set_field_by_name(
-                                "removed_state_changes",
-                                Value::List(vec![Value::Message(display(
+                            let removed_state = if previous.rule.operation == "level_state" {
+                                level_display(
                                     proto,
                                     rule.state_id,
                                     previous.value,
                                     previous.remaining,
-                                )?)]),
+                                )?
+                            } else {
+                                display(
+                                    proto,
+                                    rule.state_id,
+                                    previous.value,
+                                    previous.remaining,
+                                )?
+                            };
+                            result.set_field_by_name(
+                                "removed_state_changes",
+                                Value::List(vec![Value::Message(removed_state)]),
                             );
                             if !self.instances.iter().any(|instance| {
                                 instance.target == target_id

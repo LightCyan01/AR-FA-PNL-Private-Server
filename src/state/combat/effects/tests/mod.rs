@@ -7,6 +7,7 @@ mod critical_triggers;
 mod extra_turn;
 mod initiative;
 mod legacy_modifiers;
+mod level_conditions;
 mod levels;
 mod lifetimes;
 mod maintenance;
