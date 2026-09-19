@@ -48,6 +48,35 @@ fn shared_enemy_panel_rules_keep_catalog_target_and_limit() {
 }
 
 #[test]
+fn tagged_ally_and_target_panel_rules_split_recipients() {
+    for (skill_id, limit) in [(12003765, 1), (14003770, 0)] {
+        let allies = rule_for(91002247, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        let target = rule_for(91002248, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                allies.target.as_str(),
+                target.target.as_str(),
+                allies.panel_to_id,
+                target.panel_to_id,
+                allies.panel_limit,
+                target.panel_limit,
+            ),
+            ("allies", "targets", 67, 67, limit, limit)
+        );
+        assert!(allies.positive);
+        assert!(!target.positive);
+        assert!(allies.target_character_ids.contains(&43505));
+        assert!(target.target_character_ids.is_empty());
+        assert_eq!(allies.panel_from_ids, target.panel_from_ids);
+        assert!(!allies.panel_from_ids.contains(&14));
+    }
+}
+
+#[test]
 fn broken_target_panel_conversion_waits_for_break_and_runs_after_attack() {
     for skill_id in (12002643..=12002647)
         .chain(12002664..=12002668)
