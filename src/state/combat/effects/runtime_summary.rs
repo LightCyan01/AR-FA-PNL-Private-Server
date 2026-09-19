@@ -3,7 +3,7 @@ use super::runtime::Runtime;
 use super::runtime_lamp::lamp_condition_matches;
 use super::runtime_match::{
     amount, condition, context_matches, contextual_recipient, contextual_rule, opponent_condition,
-    opponent_contextual_rule, target_condition,
+    opponent_contextual_rule, selected, target_condition,
 };
 use crate::state::combat::prelude::*;
 
@@ -12,13 +12,14 @@ pub(crate) fn timeline_slots(
     target: &DynamicMessage,
     skill_id: i32,
     effect: &TutorialSkillEffect,
+    targets: &[i32],
 ) -> Result<Option<i32>, StateError> {
     let Some(rule) = rule_for(effect.id, "active", "skill", skill_id)? else {
         return Ok(None);
     };
     if rule.operation != "timeline_shift"
+        || !selected(rule, source, target, targets)
         || !condition(rule, source)
-        || !target_condition(rule, target)
         || !lamp_condition_matches(source, skill_id, rule)?
     {
         return Ok(None);

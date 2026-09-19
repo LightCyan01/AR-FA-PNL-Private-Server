@@ -9,30 +9,22 @@ fn apply_timeline_effects(
     source_effects: &[TutorialSkillEffect],
     target_ids: &[i32],
 ) -> Result<Vec<DynamicMessage>, StateError> {
-    let mut targets = Vec::new();
-    for target_id in target_ids.iter().copied() {
-        if !targets.contains(&target_id)
-            && members.iter().any(|member| {
-                i32_field(member, "member_id") == Some(target_id) && bool_field(member, "is_alive")
-            })
-        {
-            targets.push(target_id);
-        }
-    }
     let mut movements = Vec::new();
     let source = members
         .iter()
         .find(|member| member_id(member).ok() == Some(source_id))
         .ok_or(StateError::InvalidRequest)?;
     for effect in source_effects {
-        for target_id in targets.iter().copied() {
-            let target = members
-                .iter()
-                .find(|member| member_id(member).ok() == Some(target_id))
-                .ok_or(StateError::InvalidRequest)?;
-            let Some(slots) = effects::timeline_slots(source, target, skill_id, effect)? else {
+        for target in members
+            .iter()
+            .filter(|member| bool_field(member, "is_alive"))
+        {
+            let Some(slots) =
+                effects::timeline_slots(source, target, skill_id, effect, target_ids)?
+            else {
                 continue;
             };
+            let target_id = member_id(target)?;
             movements.extend(if slots > 0 {
                 delay_timeline_member_by_slots(proto, units, members, target_id, slots as usize)?
             } else {
@@ -1797,6 +1789,52 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![(2, 183, 3, 4, 5), (1, 395, 3, 10, 11)]
         );
+
+        let mut unchanged = original.clone();
+        assert!(apply_timeline_effects(
+            &proto,
+            &mut unchanged,
+            &members,
+            14,
+            12001729,
+            &[TutorialSkillEffect {
+                id: 91000942,
+                value: 3000
+            }],
+            &[5],
+        )
+        .unwrap()
+        .is_empty());
+        assert_eq!(unchanged, original);
+
+        let mut advanced = original.clone();
+        let pull = apply_timeline_effects(
+            &proto,
+            &mut advanced,
+            &members,
+            5,
+            22001768,
+            &[TutorialSkillEffect {
+                id: 71255008,
+                value: 100,
+            }],
+            &[1],
+        )
+        .unwrap();
+        assert!(!pull.is_empty());
+        assert!(pull
+            .iter()
+            .all(|movement| member_id(movement).ok() == Some(5)));
+        assert_eq!(optional_i32_field(&pull[0], "wait"), Some(92));
+        for (effect_id, skill_id) in [(780120010, 20009019), (780118004, 20009047)] {
+            let rule = effects::rule_for(effect_id, "active", "skill", skill_id)
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                (rule.operation.as_str(), rule.target.as_str(), rule.sign),
+                ("timeline_shift", "targets", -1)
+            );
+        }
 
         let mut break_units = original;
         let break_moves =
