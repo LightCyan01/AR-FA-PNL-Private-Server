@@ -75,12 +75,25 @@ fn attribute_or_tag_support_buffs_apply_each_modifier_once() {
             .iter()
             .all(|id| !tag_critical.target_character_ids.contains(id)));
 
-        let broken_magic = rule(91002053, skill_id);
-        assert_eq!(broken_magic.operation, "magic");
-        assert_eq!(broken_magic.target, "allies");
-        assert!(broken_magic.target_broken);
-        assert!(broken_magic.include_source);
-        assert!(!broken_magic.target_character_ids.is_empty());
+        let self_magic = rule(91002053, skill_id);
+        assert_eq!(
+            (self_magic.operation.as_str(), self_magic.target.as_str()),
+            ("magic", "self")
+        );
+        assert!(self_magic.target_broken);
+        assert!(self_magic.target_character_ids.is_empty());
+
+        let attacker_magic = rule(91002052, skill_id);
+        assert_eq!(
+            (
+                attacker_magic.operation.as_str(),
+                attacker_magic.target.as_str()
+            ),
+            ("magic", "allies")
+        );
+        assert!(attacker_magic.target_broken);
+        assert!(!attacker_magic.target_character_ids.is_empty());
+        assert!(!attacker_magic.include_source);
     }
 }
 
