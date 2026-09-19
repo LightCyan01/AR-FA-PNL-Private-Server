@@ -604,6 +604,51 @@ fn common_active_modifiers_change_only_their_declared_buckets() {
 }
 
 #[test]
+fn target_status_damage_applies_only_to_the_named_status() {
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let mut target = empty_message(&proto, "blend.model.BattleMember").unwrap();
+    target.set_field_by_name("state_changes", Value::List(Vec::new()));
+    let skill = TutorialSkill {
+        id: 22000158,
+        skill_type: 1,
+        skill_effect_type: 1,
+        skill_power_type: 2,
+        wait: 0,
+        power: 100,
+        break_power: 0,
+        break_power_type: 1,
+        attack_attributes: vec![5],
+        skill_target_type: Some(3),
+        effects: vec![TutorialSkillEffect {
+            id: 71142003,
+            value: 3_000,
+        }],
+        limit_count: None,
+        max_lamp: 0,
+        require_command_value: false,
+        skill_destination: None,
+        state_change_application_rate: 10_000,
+        hp_damage_bonus: None,
+    };
+    assert_eq!(instant_summary(&skill, &target, false, 1).unwrap(), 0);
+    target.set_field_by_name(
+        "state_changes",
+        Value::List(vec![Value::Message(
+            display(&proto, 940006, 100, 1).unwrap(),
+        )]),
+    );
+    assert_eq!(instant_summary(&skill, &target, false, 1).unwrap(), 3_000);
+    let rule = rule_for(71142003, "instant", "skill", skill.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(rule.condition.get("target_state_id"), Some(&940006));
+}
+
+#[test]
 fn effect_potency_scales_matching_sources_and_targets() {
     let negative_down = rule_for(71187001, "active", "skill", 22001609)
         .unwrap()
