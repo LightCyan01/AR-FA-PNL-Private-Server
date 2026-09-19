@@ -132,8 +132,15 @@ fn stored_burst_gauge_pays_for_the_conditional_additional_attack() {
         "members",
         Value::List(vec![Value::Message(ally), Value::Message(enemy)]),
     );
-    let rule = registry()
-        .unwrap()
+    let catalog = registry().unwrap();
+    for (effect_id, index) in [(72001683, 1), (72001684, 2)] {
+        assert!(
+            rule_for_occurrence(effect_id, "catalog", "ability", 1990536, Some(index))
+                .unwrap()
+                .is_some()
+        );
+    }
+    let rule = catalog
         .nested_actions
         .iter()
         .find(|rule| rule.owner_id == 1990536)

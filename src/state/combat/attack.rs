@@ -1835,6 +1835,13 @@ mod tests {
                 ("timeline_shift", "targets", -1)
             );
         }
+        let push = effects::rule_for(780044001, "active", "skill", 20009435)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (push.operation.as_str(), push.target.as_str(), push.sign),
+            ("timeline_shift", "targets", 1)
+        );
 
         let mut break_units = original;
         let break_moves =

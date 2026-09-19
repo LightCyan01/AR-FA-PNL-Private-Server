@@ -36,6 +36,34 @@ fn shared_status_rules_cover_textless_and_shorthand_skills() {
 }
 
 #[test]
+fn canonical_named_ability_states_use_status_rules() {
+    for (effect_id, ability_id, state_id, positive) in [
+        (120000553, 600000580, 1210318, true),
+        (120000606, 600000617, 1210330, true),
+        (120000622, 600000601, 1220035, false),
+        (120000643, 24019001, 1210352, true),
+        (120000643, 600000599, 1210352, true),
+        (120000653, 600000631, 1210362, true),
+        (120000661, 600000624, 1220059, false),
+    ] {
+        let rule = rule_for(effect_id, "passive", "ability", ability_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                rule.operation.as_str(),
+                rule.target.as_str(),
+                rule.state_id,
+                &rule.expiry,
+                rule.duration,
+                rule.positive,
+            ),
+            ("status", "self", state_id, &Expiry::Permanent, -1, positive,)
+        );
+    }
+}
+
+#[test]
 fn compound_resistance_effects_keep_each_attribute() {
     for (effect_id, skill_id, target, attribute, state_id, duration) in [
         (91000971, 11000436, "targets", 5, 50006, 5),
