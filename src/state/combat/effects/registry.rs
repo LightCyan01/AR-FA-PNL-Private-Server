@@ -103,6 +103,12 @@ pub(crate) struct LampSkillRule {
     pub(crate) full_effect_ids: Vec<i32>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct LevelModifier {
+    pub(crate) summary: i32,
+    pub(crate) value: i32,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct LampAbilityRule {
     pub(crate) target_skill_ids: Vec<i32>,
@@ -196,6 +202,8 @@ pub(crate) struct Rule {
     pub(crate) panel_limit: usize,
     #[serde(default)]
     pub(crate) stack_cap: i32,
+    #[serde(default)]
+    pub(crate) level_modifiers: Vec<LevelModifier>,
     #[serde(default)]
     pub(crate) source_side_count_min: i32,
     #[serde(default)]
@@ -533,6 +541,11 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                         || r.stack_cap <= 0
                         || r.fixed.is_some_and(|increment| increment > r.stack_cap)
                         || r.expiry != Expiry::Permanent))
+                || (!r.level_modifiers.is_empty()
+                    && (r.operation != "level_state"
+                        || r.level_modifiers
+                            .iter()
+                            .any(|modifier| modifier.summary <= 0 || modifier.value == 0)))
                 || r.source_side_count_min < 0
                 || r.source_side_count_max < 0
                 || (r.source_side_count_max > 0

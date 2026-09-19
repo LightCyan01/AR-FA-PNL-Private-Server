@@ -99,6 +99,28 @@ fn named_levels_increment_to_their_cap_and_use_the_protocol_level_field() {
         .unwrap();
     assert_eq!(marker.operation, "marker");
     assert_eq!(marker.source_character_ids.len(), 1);
+    for index in [4, 5] {
+        let crystal = rule_for_occurrence(91001939, "active", "skill", 14003260, Some(index))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                crystal.operation.as_str(),
+                crystal.state_id,
+                crystal.fixed,
+                crystal.stack_cap,
+            ),
+            ("level_state", 510246, Some(1), 5)
+        );
+        assert_eq!(
+            crystal
+                .level_modifiers
+                .iter()
+                .map(|modifier| (modifier.summary, modifier.value))
+                .collect::<Vec<_>>(),
+            vec![(4, 3_000), (6, 3_000)]
+        );
+    }
 
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -231,4 +253,37 @@ fn named_levels_increment_to_their_cap_and_use_the_protocol_level_field() {
         )
         .unwrap();
     assert_eq!(level(&state, actor_id, 610517), Some(3));
+
+    let yellow_crystal = rules.skills.iter().find(|skill| skill.id == 14003260).unwrap();
+    let before_power = state_change_summary_value(&member(&state, actor_id), 4);
+    let before_critical = state_change_summary_value(&member(&state, actor_id), 6);
+    for action_number in 15..=17 {
+        runtime
+            .apply_for_action_with_rules(
+                &proto,
+                &rules,
+                &mut state,
+                actor_id,
+                yellow_crystal.id,
+                &yellow_crystal.effects,
+                &[target_id],
+                true,
+                "after",
+                None,
+                yellow_crystal.state_change_application_rate,
+                b"level-test",
+                &transaction,
+                action_number,
+            )
+            .unwrap();
+    }
+    assert_eq!(level(&state, actor_id, 510246), Some(5));
+    assert_eq!(
+        state_change_summary_value(&member(&state, actor_id), 4),
+        before_power + 15_000
+    );
+    assert_eq!(
+        state_change_summary_value(&member(&state, actor_id), 6),
+        before_critical + 15_000
+    );
 }

@@ -359,6 +359,7 @@ impl Runtime {
             let id = member_id(member)?;
             let base = self.bases.get(&id).ok_or(StateError::InvalidRequest)?;
             let mut summaries = base.summaries.clone();
+            let mut level_summaries = BTreeMap::<i32, i32>::new();
             let mut stat_rates = BTreeMap::<String, i64>::new();
             let mut visible = BTreeMap::<i32, (i32, i32)>::new();
             let mut levels = BTreeMap::<i32, (i32, i32)>::new();
@@ -432,6 +433,16 @@ impl Runtime {
             }
             for active in self.instances.iter().filter(|i| i.target == id) {
                 if active.rule.operation == "level_state" {
+                    for modifier in &active.rule.level_modifiers {
+                        let value = modifier
+                            .value
+                            .checked_mul(active.value)
+                            .ok_or(StateError::InvalidRequest)?;
+                        let current = level_summaries.entry(modifier.summary).or_default();
+                        *current = current
+                            .checked_add(value)
+                            .ok_or(StateError::InvalidRequest)?;
+                    }
                     levels.insert(active.rule.state_id, (active.value, active.remaining));
                     continue;
                 }
@@ -452,6 +463,13 @@ impl Runtime {
                 } else {
                     entry.1.max(active.remaining)
                 };
+            }
+            drop(add);
+            for (summary, value) in level_summaries {
+                let current = summaries.entry(summary).or_default();
+                *current = current
+                    .checked_add(value)
+                    .ok_or(StateError::InvalidRequest)?;
             }
             for action in self
                 .nested_actions
