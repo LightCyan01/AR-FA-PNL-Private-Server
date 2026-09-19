@@ -116,6 +116,22 @@ fn weak_skill_modifier_applies_only_to_lowest_resistance() {
         instant_summary(&abnormal_skill, &negative_target, false, 1).unwrap(),
         0
     );
+    let abnormal_break_skill = TutorialSkill {
+        id: 12003897,
+        effects: vec![TutorialSkillEffect {
+            id: 91002337,
+            value: 4_000,
+        }],
+        ..abnormal_skill
+    };
+    assert_eq!(
+        instant_summary(&abnormal_break_skill, &abnormal_target, false, 3).unwrap(),
+        4_000
+    );
+    assert_eq!(
+        instant_summary(&abnormal_break_skill, &negative_target, false, 3).unwrap(),
+        0
+    );
 }
 
 #[test]
