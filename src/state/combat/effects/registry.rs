@@ -134,6 +134,7 @@ pub(crate) struct LampAbilityRule {
 pub(crate) struct RandomModifierChoice {
     pub(crate) operation: String,
     pub(crate) summary: i32,
+    pub(crate) sign: i32,
     pub(crate) state_id: i32,
     pub(crate) expiry: Expiry,
     pub(crate) duration: i32,
@@ -454,7 +455,7 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                         || (r.source_state_level_min > 0 && r.source_state_ids.len() != 1)))
                 || (r.operation == "random_modifier"
                     && (r.mode != "active"
-                        || r.target != "allies"
+                        || !matches!(r.target.as_str(), "allies" | "targets")
                         || r.phase != "after"
                         || r.owner_type != "skill"
                         || r.owner_index.is_none()
@@ -469,10 +470,15 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                                 || choice.positive
                                     != data.positive_state_ids.contains(&choice.state_id)
                                 || !matches!(choice.expiry, Expiry::Turn | Expiry::Hit)
-                                || !matches!(choice.operation.as_str(), "summary" | "taken_down")
+                                || !matches!(choice.sign, -1 | 1)
+                                || !matches!(
+                                    choice.operation.as_str(),
+                                    "summary" | "taken_down" | "healing_received"
+                                )
                                 || (choice.operation == "summary"
                                     && !(1..=36).contains(&choice.summary))
-                                || (choice.operation == "taken_down" && choice.summary != 0)
+                                || (matches!(choice.operation.as_str(), "taken_down" | "healing_received")
+                                    && choice.summary != 0)
                         })))
                 || (r.operation != "random_modifier"
                     && (r.random_draws != 0 || !r.random_choices.is_empty()))

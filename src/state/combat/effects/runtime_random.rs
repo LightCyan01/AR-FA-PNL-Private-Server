@@ -1,6 +1,6 @@
 use super::registry::{RandomModifierChoice, Rule};
 use super::runtime::{Instance, Runtime};
-use super::runtime_match::{selected, state_application_blocked};
+use super::runtime_match::{amount, selected, state_application_blocked};
 use super::runtime_results::{effect_result, status_effect_result};
 use crate::state::combat::prelude::*;
 use std::collections::BTreeMap;
@@ -62,6 +62,7 @@ impl Runtime {
                     )?);
                     continue;
                 }
+                let value = amount(&choice_rule, value)?;
                 let value = self.apply_potency(members, source, target_id, &choice_rule, value)?;
                 let total = totals.entry(choice_index).or_default();
                 *total = total.checked_add(value).ok_or(StateError::InvalidRequest)?;
@@ -106,6 +107,7 @@ fn choice_rule(base: &Rule, choice: &RandomModifierChoice) -> Rule {
     let mut rule = base.clone();
     rule.operation.clone_from(&choice.operation);
     rule.summary = choice.summary;
+    rule.sign = choice.sign;
     rule.state_id = choice.state_id;
     rule.expiry = choice.expiry.clone();
     rule.duration = choice.duration;

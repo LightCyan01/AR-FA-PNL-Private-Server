@@ -143,3 +143,120 @@ fn ghost_party_draws_four_deterministic_modifiers_for_each_ally() {
         );
     }
 }
+
+#[test]
+fn infamous_absword_applies_one_deterministic_target_debuff() {
+    let rules = registry()
+        .unwrap()
+        .rules
+        .iter()
+        .filter(|rule| rule.id == 71149005)
+        .collect::<Vec<_>>();
+    assert_eq!(rules.len(), 10);
+    for rule in &rules {
+        assert_eq!((rule.target.as_str(), rule.random_draws), ("targets", 1));
+        assert_eq!(
+            rule.random_choices
+                .iter()
+                .map(|choice| (
+                    choice.operation.as_str(),
+                    choice.summary,
+                    choice.sign,
+                    choice.state_id,
+                    &choice.expiry,
+                    choice.duration,
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                ("summary", 2, 1, 920015, &Expiry::Turn, 3),
+                ("summary", 11, 1, 920008, &Expiry::Hit, 3),
+                ("healing_received", 0, -1, 920005, &Expiry::Turn, 3),
+            ]
+        );
+    }
+    let protection = registry()
+        .unwrap()
+        .rules
+        .iter()
+        .find(|rule| rule.id == 71149003 && rule.owner_id == 22000294)
+        .unwrap();
+    assert_eq!(
+        (
+            protection.operation.as_str(),
+            protection.target.as_str(),
+            protection.state_id,
+            &protection.expiry,
+            protection.duration,
+            protection.positive,
+        ),
+        ("taken_down", "allies", 560074, &Expiry::Attacked, 3, true)
+    );
+
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let mut ally = empty_message(&proto, "blend.model.BattleAlly").unwrap();
+    ally.set_field_by_name("character_id", Value::I32(1));
+    let mut source = empty_message(&proto, "blend.model.BattleMember").unwrap();
+    source.set_field_by_name("member_id", Value::I32(1));
+    source.set_field_by_name("type", Value::EnumNumber(0));
+    source.set_field_by_name("is_alive", Value::Bool(true));
+    source.set_field_by_name("ally", Value::Message(ally));
+    let enemy = empty_message(&proto, "blend.model.BattleEnemy").unwrap();
+    let mut target = empty_message(&proto, "blend.model.BattleMember").unwrap();
+    target.set_field_by_name("member_id", Value::I32(2));
+    target.set_field_by_name("type", Value::EnumNumber(1));
+    target.set_field_by_name("is_alive", Value::Bool(true));
+    target.set_field_by_name("enemy", Value::Message(enemy));
+    let members = vec![source.clone(), target];
+    let rule = rules[0];
+    let effect = TutorialSkillEffect {
+        id: 71149005,
+        value: 2_000,
+    };
+    let apply = |action_number| {
+        let mut runtime = Runtime::default();
+        let results = runtime
+            .apply_random_modifier(
+                &proto,
+                &members,
+                &source,
+                1,
+                &effect,
+                &[2],
+                true,
+                rule,
+                effect.value,
+                b"infamous-absword-test",
+                "infamous-absword-test",
+                action_number,
+            )
+            .unwrap();
+        let instances = runtime
+            .instances
+            .iter()
+            .map(|instance| {
+                (
+                    instance.target,
+                    instance.rule.state_id,
+                    instance.rule.sign,
+                    instance.value,
+                    instance.remaining,
+                )
+            })
+            .collect::<Vec<_>>();
+        (results, instances)
+    };
+    assert_eq!(apply(1), apply(1));
+    let healing_down = (1..=32)
+        .map(apply)
+        .find_map(|(_, instances)| {
+            instances
+                .into_iter()
+                .find(|(_, state_id, _, _, _)| *state_id == 920005)
+        })
+        .unwrap();
+    assert_eq!(healing_down, (2, 920005, -1, -2_000, 3));
+}
