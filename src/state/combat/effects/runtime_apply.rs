@@ -272,6 +272,25 @@ impl Runtime {
                 }
             }
             let rule = &effective_rule;
+            let weak_triggered = if rule.operation == "panel_convert" && rule.weak_only {
+                let skill = rule_skill(rules.ok_or(StateError::InvalidRequest)?, skill_id)?;
+                targets.iter().try_fold(
+                    false,
+                    |weak, target_id| -> Result<bool, StateError> {
+                        let target = members
+                            .iter()
+                            .find(|member| member_id(member).ok() == Some(*target_id))
+                            .ok_or(StateError::InvalidRequest)?;
+                        Ok(weak
+                            || target_resistance(
+                                target,
+                                preferred_attack_attribute(target, skill)?,
+                            )? < 0)
+                    },
+                )?
+            } else {
+                true
+            };
             let required_ability = rule.required_ability_id == 0
                 || self.passives.iter().any(|passive| {
                     passive.source == source_id
@@ -288,6 +307,7 @@ impl Runtime {
                 });
             if rule.phase != phase
                 || (rule.critical_only && !critical_trigger)
+                || !weak_triggered
                 || !required_ability
                 || !condition(rule, &source)
                 || !lamp_condition_matches(&source, skill_id, rule)?

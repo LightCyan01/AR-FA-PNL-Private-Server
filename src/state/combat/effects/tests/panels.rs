@@ -508,6 +508,20 @@ fn acquisition_panels_apply_once_and_expire_on_hit() {
 
 #[test]
 fn ally_panel_conversion_changes_only_future_eligible_ally_panels() {
+    let quick_mix = rule_for(91001377, "active", "skill", 14001723)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            quick_mix.target.as_str(),
+            quick_mix.phase.as_str(),
+            quick_mix.panel_to_id,
+            quick_mix.panel_limit,
+            quick_mix.weak_only,
+        ),
+        ("allies", "after", 14, 1, true)
+    );
+
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../schemas/atelier-resleriana-2.16.0.protoset"
@@ -537,6 +551,21 @@ fn ally_panel_conversion_changes_only_future_eligible_ally_panels() {
         .find(|member| member_type(member).ok() == Some(1))
         .and_then(|member| i32_field(member, "member_id"))
         .unwrap();
+    let set_fire_resistance = |state: &mut DynamicMessage, value| {
+        let mut members = message_list(state, "members");
+        let enemy = members
+            .iter_mut()
+            .find(|member| member_id(member).ok() == Some(enemy_id))
+            .unwrap();
+        let mut resistance = empty_message(&proto, "blend.model.BattleResistance").unwrap();
+        resistance.set_field_by_name("fire", Value::I32(value));
+        enemy.set_field_by_name("resistance", Value::Message(resistance));
+        state.set_field_by_name(
+            "members",
+            Value::List(members.into_iter().map(Value::Message).collect()),
+        );
+    };
+    set_fire_resistance(&mut state, 0);
     let units = [(source_id, 1), (enemy_id, 1), (source_id, 2), (enemy_id, 2)]
         .into_iter()
         .enumerate()
@@ -559,19 +588,46 @@ fn ally_panel_conversion_changes_only_future_eligible_ally_panels() {
     runtime.instances.clear();
     runtime.managed.clear();
     runtime.refresh(&proto, &mut state).unwrap();
-    let results = runtime
-        .apply(
+    let effect = [TutorialSkillEffect {
+        id: 91001377,
+        value: 100,
+    }];
+    assert!(runtime
+        .apply_for_action_with_rules(
             &proto,
+            &rules,
             &mut state,
             source_id,
-            &[TutorialSkillEffect {
-                id: 91001215,
-                value: 1_000,
-            }],
-            &[source_id],
+            14001723,
+            &effect,
+            &[enemy_id],
             true,
             "after",
             Some(&panel_context),
+            10_000,
+            b"quick-mix-panel-test",
+            &start.start_txid,
+            1,
+        )
+        .unwrap()
+        .is_empty());
+    set_fire_resistance(&mut state, -1);
+    let results = runtime
+        .apply_for_action_with_rules(
+            &proto,
+            &rules,
+            &mut state,
+            source_id,
+            14001723,
+            &effect,
+            &[enemy_id],
+            true,
+            "after",
+            Some(&panel_context),
+            10_000,
+            b"quick-mix-panel-test",
+            &start.start_txid,
+            2,
         )
         .unwrap();
     assert_eq!(results.len(), 1);
@@ -583,14 +639,14 @@ fn ally_panel_conversion_changes_only_future_eligible_ally_panels() {
                 optional_i32_field(panel, "panel_id").unwrap_or(11),
             ))
             .collect::<Vec<_>>(),
-        vec![(3, 12)]
+        vec![(3, 14)]
     );
     assert_eq!(
         message_list(&state, "timeline_panels")
             .iter()
             .map(|panel| optional_i32_field(panel, "panel_id").unwrap_or(11))
             .collect::<Vec<_>>(),
-        vec![13, 11, 12, 14]
+        vec![13, 11, 14, 14]
     );
 }
 
