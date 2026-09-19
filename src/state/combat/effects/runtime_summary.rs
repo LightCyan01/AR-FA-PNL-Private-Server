@@ -174,6 +174,12 @@ impl Runtime {
                     && (!opponent_contextual_rule(&instance.rule)
                         || opponent
                             .is_some_and(|target| opponent_condition(&instance.rule, target)))
+                    && (!instance.rule.weak_only
+                        || opponent.is_some_and(|target| {
+                            preferred_attack_attribute(target, skill)
+                                .and_then(|attribute| target_resistance(target, attribute))
+                                .is_ok_and(|resistance| resistance < 0)
+                        }))
                     && context_matches(
                         &instance.rule,
                         instance.source_character_id,

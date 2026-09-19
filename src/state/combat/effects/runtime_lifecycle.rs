@@ -166,11 +166,13 @@ impl Runtime {
         runtime.initialize_skill_lamps(proto, state)?;
         let mut start_gain = 0i64;
         let mut start_burst = BTreeMap::<i32, i32>::new();
-        for passive in runtime
+        let battle_start = runtime
             .passives
             .iter()
             .filter(|passive| passive.rule.trigger.as_deref() == Some("battle_start"))
-        {
+            .cloned()
+            .collect::<Vec<_>>();
+        for passive in battle_start {
             match passive.rule.operation.as_str() {
                 "bomb_gauge" => {
                     start_gain = start_gain
@@ -195,9 +197,35 @@ impl Runtime {
                         passive.value,
                     )?;
                 }
+                _ if passive.rule.target == "self"
+                    && passive.rule.expiry != Expiry::Permanent
+                    && passive.rule.duration > 0
+                    && passive.rule.state_id > 0 =>
+                {
+                    let mut rule = passive.rule;
+                    rule.trigger = None;
+                    runtime
+                        .managed
+                        .entry(passive.source)
+                        .or_default()
+                        .insert(rule.state_id);
+                    runtime.instances.push(Instance {
+                        source: passive.source,
+                        source_character_id: passive.source_character_id,
+                        target: passive.source,
+                        value: passive.value,
+                        remaining: rule.duration,
+                        rule,
+                    });
+                }
                 _ => return Err(StateError::InvalidRequest),
             }
         }
+        runtime.passives.retain(|passive| {
+            passive.rule.trigger.as_deref() != Some("battle_start")
+                || passive.rule.expiry == Expiry::Permanent
+                || passive.rule.state_id <= 0
+        });
         if start_gain != 0 {
             let maximum = rules.constants.max_bomb_gauge;
             let delta = i64::from(maximum).saturating_mul(start_gain) / 10_000;

@@ -66,11 +66,14 @@ fn repeated_poison_uses_pre_action_abnormal_state() {
             assert_eq!((rule.state_id, rule.duration), (940007, 3));
         }
     }
-    for index in 0..5 {
-        let rule = rule_for_occurrence(780063000, "active", "skill", 32000525, Some(index))
-            .unwrap()
-            .unwrap();
-        assert_eq!((rule.state_id, rule.duration), (940007, 2));
+    for skill_id in [20001174, 20001329, 32000525] {
+        for index in 0..5 {
+            let rule =
+                rule_for_occurrence(780063000, "active", "skill", skill_id, Some(index))
+                    .unwrap()
+                    .unwrap();
+            assert_eq!((rule.state_id, rule.duration), (940007, 2));
+        }
     }
 
     let clean_snapshot = state.clone();

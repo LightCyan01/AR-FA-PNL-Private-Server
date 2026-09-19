@@ -487,6 +487,100 @@ fn common_active_modifiers_change_only_their_declared_buckets() {
         ),
         ("healing_received", "enemies", -1, &Expiry::Turn, 2)
     );
+    let critical_rate_down = rule_for(780048006, "active", "skill", 20008326)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            critical_rate_down.operation.as_str(),
+            critical_rate_down.summary,
+            critical_rate_down.target.as_str(),
+            critical_rate_down.sign,
+            &critical_rate_down.expiry,
+            critical_rate_down.duration,
+        ),
+        ("summary", 6, "targets", -1, &Expiry::Turn, 3)
+    );
+    for (skill_id, target) in [(26001994, "targets"), (32000997, "allies")] {
+        let critical_rate_up = rule_for(76201007, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                critical_rate_up.operation.as_str(),
+                critical_rate_up.summary,
+                critical_rate_up.target.as_str(),
+                critical_rate_up.sign,
+                &critical_rate_up.expiry,
+                critical_rate_up.duration,
+            ),
+            ("summary", 6, target, 1, &Expiry::Turn, 2)
+        );
+    }
+    for (skill_id, target) in [
+        (32002564, "allies"),
+        (32004927, "self"),
+        (32005031, "self"),
+    ] {
+        let critical_rate_up = rule_for(71153004, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                critical_rate_up.target.as_str(),
+                critical_rate_up.summary,
+                critical_rate_up.sign,
+                &critical_rate_up.expiry,
+                critical_rate_up.duration,
+            ),
+            (target, 6, 1, &Expiry::Turn, 1)
+        );
+    }
+    for (effect_id, skill_id) in [
+        (71212004, 22001466),
+        (780045014, 20007180),
+        (780048001, 20001686),
+    ] {
+        assert!(rule_for(effect_id, "active", "skill", skill_id)
+            .unwrap()
+            .is_none());
+    }
+    let ally_damage_down = rule_for(780087005, "active", "skill", 20002500)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            ally_damage_down.operation.as_str(),
+            ally_damage_down.target.as_str(),
+            ally_damage_down.sign,
+            &ally_damage_down.expiry,
+            ally_damage_down.duration,
+        ),
+        ("taken_down", "targets", 1, &Expiry::Attacked, 2)
+    );
+    let conditional_immunity = rule_for(780103015, "active", "skill", 32003858)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            conditional_immunity.operation.as_str(),
+            conditional_immunity.target.as_str(),
+            conditional_immunity.fixed,
+            &conditional_immunity.expiry,
+            conditional_immunity.duration,
+            conditional_immunity
+                .condition
+                .get("source_abnormal_count_max"),
+        ),
+        (
+            "healing_received",
+            "enemies",
+            Some(10_000),
+            &Expiry::Turn,
+            3,
+            Some(&0),
+        )
+    );
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../schemas/atelier-resleriana-2.16.0.protoset"
@@ -509,6 +603,21 @@ fn common_active_modifiers_change_only_their_declared_buckets() {
         member.set_field_by_name("state_change_summaries", Value::List(Vec::new()));
         member
     };
+    let mut source = member(1, 0);
+    assert!(super::super::runtime_match::condition(
+        conditional_immunity,
+        &source,
+    ));
+    source.set_field_by_name(
+        "state_changes",
+        Value::List(vec![Value::Message(
+            display(&proto, 940006, 100, 1).unwrap(),
+        )]),
+    );
+    assert!(!super::super::runtime_match::condition(
+        conditional_immunity,
+        &source,
+    ));
     let mut state = empty_message(&proto, "blend.model.BattleState").unwrap();
     state.set_field_by_name(
         "members",

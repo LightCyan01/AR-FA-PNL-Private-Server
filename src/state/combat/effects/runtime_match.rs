@@ -12,6 +12,7 @@ pub(super) fn condition(rule: &Rule, source: &DynamicMessage) -> bool {
                 "hp_min"
                 | "hp_max"
                 | "hp_below"
+                | "source_abnormal_count_max"
                 | "target_hp_min"
                 | "target_hp_max"
                 | "target_hp_below"
@@ -41,6 +42,25 @@ pub(super) fn condition(rule: &Rule, source: &DynamicMessage) -> bool {
             .condition
             .get("hp_below")
             .is_none_or(|n| hp * 100 < maximum * i64::from(*n))
+        && rule
+            .condition
+            .get("source_abnormal_count_max")
+            .is_none_or(|maximum| {
+                registry().ok().is_some_and(|rules| {
+                    i32::try_from(
+                        message_list(source, "state_changes")
+                            .iter()
+                            .filter(|change| {
+                                rules.abnormal_state_ids.contains(
+                                    &i32_field(change, "state_change_id").unwrap_or_default(),
+                                )
+                            })
+                            .count(),
+                    )
+                    .unwrap_or(i32::MAX)
+                        <= *maximum
+                })
+            })
         && (rule.source_state_ids.is_empty()
             || message_list(source, "state_changes").iter().any(|change| {
                 rule.source_state_ids

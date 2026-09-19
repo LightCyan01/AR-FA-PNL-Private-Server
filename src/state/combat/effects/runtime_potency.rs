@@ -1,4 +1,4 @@
-use super::registry::{registry, Rule};
+use super::registry::{registry, Expiry, Rule};
 use super::runtime::Runtime;
 use super::runtime_match::{condition, selected_for_source_character};
 use crate::state::combat::prelude::*;
@@ -74,7 +74,9 @@ impl Runtime {
                     }),
             );
         for instance in self.instances.iter_mut().filter(|instance| {
-            instance_applies(instance.target, &instance.rule.operation) && instance.remaining > 0
+            instance_applies(instance.target, &instance.rule.operation)
+                && instance.rule.expiry == Expiry::Negative
+                && instance.remaining > 0
         }) {
             instance.remaining -= 1;
         }

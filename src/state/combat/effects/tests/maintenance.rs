@@ -155,7 +155,7 @@ fn effect_healing_uses_max_hp_and_protocol_target_scope() {
 }
 
 #[test]
-fn triggered_ability_resources_bind_by_catalog_slot() {
+fn triggered_ability_effects_bind_by_catalog_slot() {
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../schemas/atelier-resleriana-2.16.0.protoset"
@@ -207,6 +207,33 @@ fn triggered_ability_resources_bind_by_catalog_slot() {
         .unwrap()
         .source_character_ids[0];
     let external = [
+        (
+            None,
+            4990903,
+            None,
+            TutorialSkillEffect {
+                id: 95000217,
+                value: 200,
+            },
+        ),
+        (
+            None,
+            4990918,
+            None,
+            TutorialSkillEffect {
+                id: 95000220,
+                value: 500,
+            },
+        ),
+        (
+            None,
+            4990928,
+            None,
+            TutorialSkillEffect {
+                id: 95000222,
+                value: 300,
+            },
+        ),
         (
             None,
             1990531,
@@ -300,6 +327,86 @@ fn triggered_ability_resources_bind_by_catalog_slot() {
             "current_gauge",
         ),
         Some(burst_before + 10)
+    );
+    let mut instances = runtime
+        .instances
+        .iter()
+        .filter(|instance| matches!(instance.rule.id, 95000217 | 95000220 | 95000222))
+        .map(|instance| {
+            (
+                instance.rule.id,
+                instance.value,
+                instance.rule.expiry.clone(),
+                instance.remaining,
+                instance.rule.trigger.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+    instances.sort_by_key(|instance| instance.0);
+    assert_eq!(
+        instances,
+        [
+            (95000217, 200, Expiry::Turn, 1, None),
+            (95000220, 500, Expiry::Turn, 1, None),
+            (95000222, -300, Expiry::Attacked, 1, None),
+        ]
+    );
+    assert!(message_list(&source_member, "state_changes").iter().any(|change| {
+        i32_field(change, "state_change_id") == Some(50001)
+            && i32_field(change, "value") == Some(500)
+            && i32_field(change, "rest_count") == Some(1)
+    }));
+    assert!(message_list(&source_member, "state_changes").iter().any(|change| {
+        i32_field(change, "state_change_id") == Some(910006)
+            && i32_field(change, "value") == Some(-300)
+            && i32_field(change, "rest_count") == Some(1)
+    }));
+    let weak_skill = rules
+        .skills
+        .iter()
+        .find(|skill| !skill.attack_attributes.is_empty())
+        .unwrap();
+    let mut enemy = message_list(&state, "members")
+        .into_iter()
+        .find(|member| member_type(member).ok() == Some(1))
+        .unwrap();
+    let mut resistance = member_status(&enemy, "resistance").unwrap();
+    for field in [
+        "slashing", "impact", "piercing", "fire", "ice", "lightning", "wind",
+    ] {
+        resistance.set_field_by_name(field, Value::I32(0));
+    }
+    enemy.set_field_by_name("resistance", Value::Message(resistance.clone()));
+    assert_eq!(
+        runtime.contextual_summary_against(&source_member, Some(&enemy), weak_skill, false, 1),
+        0
+    );
+    resistance.set_field_by_name(
+        resistance_name(preferred_attack_attribute(&enemy, weak_skill).unwrap()).unwrap(),
+        Value::I32(-1),
+    );
+    enemy.set_field_by_name("resistance", Value::Message(resistance));
+    assert_eq!(
+        runtime.contextual_summary_against(&source_member, Some(&enemy), weak_skill, false, 1),
+        500
+    );
+    let positive = rule_for(91001018, "active", "skill", 0)
+        .unwrap()
+        .unwrap();
+    let members = message_list(&state, "members");
+    assert_eq!(
+        runtime
+            .apply_potency(&members, &source_member, source, positive, 1_000)
+            .unwrap(),
+        1_020
+    );
+    assert_eq!(
+        runtime
+            .instances
+            .iter()
+            .find(|instance| instance.rule.id == 95000217)
+            .map(|instance| instance.remaining),
+        Some(1)
     );
 
     lower_hp(&mut state);
