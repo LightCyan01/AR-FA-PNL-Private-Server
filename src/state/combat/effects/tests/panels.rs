@@ -90,6 +90,43 @@ fn burn_panel_conversion_covers_every_authoritative_variant() {
 }
 
 #[test]
+fn target_burst_panel_conversion_covers_every_authoritative_variant() {
+    let listed = [11, 12, 13, 15, 16, 18, 19, 20, 21, 22, 30, 33, 36, 39, 42, 45];
+    for skill_id in [22000298, 22000415, 22000810, 32000837] {
+        let rule = rule_for(71149008, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(rule.panel_from_ids, listed);
+        assert_eq!(
+            (
+                rule.target.as_str(),
+                rule.phase.as_str(),
+                rule.panel_to_id,
+                rule.panel_limit,
+                rule.positive,
+            ),
+            ("targets", "after", 14, 1, true)
+        );
+    }
+    for skill_id in [22001167, 22001196] {
+        let rule = rule_for(71149008, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(rule.panel_from_ids.len(), 28);
+        assert!(!rule.panel_from_ids.contains(&14));
+        assert!(!rule.panel_from_ids.contains(&17));
+    }
+    for skill_id in [22001403, 32000825, 32000940, 32000981] {
+        let rule = rule_for(71149008, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(rule.panel_from_ids.len(), 30);
+        assert!(rule.panel_from_ids.contains(&14));
+        assert!(rule.panel_from_ids.contains(&17));
+    }
+}
+
+#[test]
 fn tagged_ally_and_target_panel_rules_split_recipients() {
     for (skill_id, limit) in [(12003765, 1), (14003770, 0)] {
         let allies = rule_for(91002247, "active", "skill", skill_id)
