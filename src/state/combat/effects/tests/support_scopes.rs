@@ -50,6 +50,31 @@ fn attribute_or_tag_support_buffs_apply_each_modifier_once() {
         .target_character_ids
         .iter()
         .all(|id| !tag_defense.target_character_ids.contains(id)));
+
+    for skill_id in [12003393, 14003398] {
+        let lightning_critical = rule(91002049, skill_id);
+        let lightning_item = rule(91002051, skill_id);
+        let tag_critical = rule(91002050, skill_id);
+        let tag_item = rule(91002054, skill_id);
+        assert_eq!(
+            (
+                lightning_critical.summary,
+                lightning_item.summary,
+                tag_critical.summary,
+                tag_item.summary,
+            ),
+            (7, 27, 7, 27)
+        );
+        assert_eq!(
+            lightning_critical.target_character_ids,
+            lightning_item.target_character_ids
+        );
+        assert_eq!(tag_critical.target_character_ids, tag_item.target_character_ids);
+        assert!(lightning_critical
+            .target_character_ids
+            .iter()
+            .all(|id| !tag_critical.target_character_ids.contains(id)));
+    }
 }
 
 #[test]
