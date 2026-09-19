@@ -3,6 +3,316 @@ use crate::state::combat::prelude::*;
 use std::path::Path;
 
 #[test]
+fn shared_enemy_panel_rules_keep_catalog_target_and_limit() {
+    let neutral = rule_for(71143001, "active", "skill", 22000107)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            neutral.target.as_str(),
+            neutral.panel_to_id,
+            neutral.panel_limit
+        ),
+        ("targets", 11, 1)
+    );
+    let weakened = rule_for(71146005, "active", "skill", 22000984)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            weakened.target.as_str(),
+            weakened.panel_to_id,
+            weakened.panel_limit,
+        ),
+        ("targets", 36, 1)
+    );
+    let range_switch = rule_for(91001433, "active", "skill", 11002464)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            range_switch.target.as_str(),
+            range_switch.panel_to_id,
+            range_switch.panel_limit,
+        ),
+        ("self", 39, 1)
+    );
+    let highest_magic = rule_for(91001313, "active", "skill", 11002669)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            highest_magic.target.as_str(),
+            highest_magic.panel_from_ids.as_slice(),
+            highest_magic.panel_to_id,
+            highest_magic.panel_limit,
+        ),
+        ("highest_magic_ally", [11].as_slice(), 12, 1)
+    );
+}
+
+#[test]
+fn burn_panel_conversion_covers_every_authoritative_variant() {
+    for skill_id in [22000155, 30000078, 32001597] {
+        let rule = rule_for(71142001, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (rule.target.as_str(), rule.panel_to_id, rule.panel_limit),
+            ("targets", 45, 10)
+        );
+        assert_eq!(rule.panel_from_ids.len(), 14);
+        assert!(rule.panel_from_ids.contains(&11));
+        assert!(rule.panel_from_ids.contains(&45));
+        assert!(!rule.panel_from_ids.contains(&12));
+    }
+    for skill_id in [22001622, 32003846, 32004879, 32004983, 32005229] {
+        let rule = rule_for(71142001, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                rule.panel_from_ids.as_slice(),
+                rule.panel_to_id,
+                rule.panel_limit
+            ),
+            ([11, 13, 26].as_slice(), 45, 10)
+        );
+    }
+
+    let all = rule_for(71142001, "active", "skill", 32002591)
+        .unwrap()
+        .unwrap();
+    assert_eq!((all.panel_from_ids.len(), all.panel_limit), (30, 1));
+    let negative = rule_for(71142001, "active", "skill", 32002748)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (negative.panel_from_ids.len(), negative.panel_limit),
+        (14, 1)
+    );
+    let empty = rule_for(71142001, "active", "skill", 32003110)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (empty.panel_from_ids.as_slice(), empty.panel_limit),
+        ([11].as_slice(), 1)
+    );
+}
+
+#[test]
+fn target_burst_panel_conversion_covers_every_authoritative_variant() {
+    let listed = [
+        11, 12, 13, 15, 16, 18, 19, 20, 21, 22, 30, 33, 36, 39, 42, 45,
+    ];
+    for skill_id in [22000298, 22000415, 22000810, 32000837] {
+        let rule = rule_for(71149008, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(rule.panel_from_ids, listed);
+        assert_eq!(
+            (
+                rule.target.as_str(),
+                rule.phase.as_str(),
+                rule.panel_to_id,
+                rule.panel_limit,
+                rule.positive,
+            ),
+            ("targets", "after", 14, 1, true)
+        );
+    }
+    for skill_id in [22001167, 22001196] {
+        let rule = rule_for(71149008, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(rule.panel_from_ids.len(), 28);
+        assert!(!rule.panel_from_ids.contains(&14));
+        assert!(!rule.panel_from_ids.contains(&17));
+    }
+    for skill_id in [22001403, 32000825, 32000940, 32000981] {
+        let rule = rule_for(71149008, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(rule.panel_from_ids.len(), 30);
+        assert!(rule.panel_from_ids.contains(&14));
+        assert!(rule.panel_from_ids.contains(&17));
+    }
+}
+
+#[test]
+fn tagged_ally_and_target_panel_rules_split_recipients() {
+    for (skill_id, limit) in [(12003765, 1), (14003770, 0)] {
+        let allies = rule_for(91002247, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        let target = rule_for(91002248, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                allies.target.as_str(),
+                target.target.as_str(),
+                allies.panel_to_id,
+                target.panel_to_id,
+                allies.panel_limit,
+                target.panel_limit,
+            ),
+            ("allies", "targets", 67, 67, limit, limit)
+        );
+        assert!(allies.positive);
+        assert!(!target.positive);
+        assert!(allies.target_character_ids.contains(&43505));
+        assert!(target.target_character_ids.is_empty());
+        assert_eq!(allies.panel_from_ids, target.panel_from_ids);
+        assert!(!allies.panel_from_ids.contains(&14));
+    }
+}
+
+#[test]
+fn healing_panel_aliases_preserve_the_next_non_burst_limit() {
+    for skill_id in [
+        22000934, 22000939, 22000944, 22001434, 26002071, 26002339, 32001101, 32001178, 32002195,
+        32005633,
+    ] {
+        let rule = rule_for(71190007, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (rule.target.as_str(), rule.panel_to_id, rule.panel_limit),
+            ("self", 42, 1)
+        );
+        assert!(!rule.panel_from_ids.contains(&14));
+    }
+}
+
+#[test]
+fn broken_target_panel_conversion_waits_for_break_and_runs_after_attack() {
+    for skill_id in (12002643..=12002647)
+        .chain(12002664..=12002668)
+        .chain(12002983..=12002987)
+    {
+        let rule = rule_for(91001657, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                rule.target.as_str(),
+                rule.phase.as_str(),
+                rule.panel_to_id,
+                rule.panel_limit,
+                rule.target_broken,
+            ),
+            ("self", "after", 14, 1, true)
+        );
+    }
+
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let rules = load_gameplay_rules().unwrap();
+    let fresh = load_fresh_rules().unwrap();
+    let resources = reduce_talk_event(
+        &proto,
+        &fresh,
+        &rules,
+        starter_resources(&proto, &fresh).unwrap(),
+        101001001,
+        1,
+    )
+    .unwrap()
+    .resources;
+    let start = reduce_battle_start(&proto, &rules, resources, 101001002, 1).unwrap();
+    let mut state = start.state;
+    let source_id = message_list(&state, "members")
+        .iter()
+        .find(|member| member_type(member).ok() == Some(0))
+        .and_then(|member| i32_field(member, "member_id"))
+        .unwrap();
+    let target_id = message_list(&state, "members")
+        .iter()
+        .find(|member| member_type(member).ok() == Some(1))
+        .and_then(|member| i32_field(member, "member_id"))
+        .unwrap();
+    let units = [(source_id, 1), (target_id, 1), (source_id, 2)]
+        .into_iter()
+        .enumerate()
+        .map(|(wait, (member_id, number))| {
+            Value::Message(build_timeline_unit(&proto, member_id, number, wait as i32).unwrap())
+        })
+        .collect();
+    state.set_field_by_name("timeline_units", Value::List(units));
+    set_timeline_panels(&proto, &mut state, &[11, 11, 11], 3, 1).unwrap();
+    let panel_context = state.clone();
+    let effect = [TutorialSkillEffect {
+        id: 91001657,
+        value: 100,
+    }];
+    let mut runtime = start.effects;
+    assert!(runtime
+        .apply_for_action_with_rules(
+            &proto,
+            &rules,
+            &mut state,
+            source_id,
+            12002664,
+            &effect,
+            &[target_id],
+            true,
+            "after",
+            Some(&panel_context),
+            10_000,
+            b"broken-panel-test",
+            &start.start_txid,
+            1,
+        )
+        .unwrap()
+        .is_empty());
+    let mut members = message_list(&state, "members");
+    let target = members
+        .iter_mut()
+        .find(|member| i32_field(member, "member_id") == Some(target_id))
+        .unwrap();
+    let mut enemy = member_status(target, "enemy").unwrap();
+    enemy.set_field_by_name("is_broken", Value::Bool(true));
+    target.set_field_by_name("enemy", Value::Message(enemy));
+    state.set_field_by_name(
+        "members",
+        Value::List(members.into_iter().map(Value::Message).collect()),
+    );
+    assert_eq!(
+        runtime
+            .apply_for_action_with_rules(
+                &proto,
+                &rules,
+                &mut state,
+                source_id,
+                12002664,
+                &effect,
+                &[target_id],
+                true,
+                "after",
+                Some(&panel_context),
+                10_000,
+                b"broken-panel-test",
+                &start.start_txid,
+                2,
+            )
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        message_list(&state, "timeline_panels")
+            .iter()
+            .map(|panel| optional_i32_field(panel, "panel_id").unwrap_or(11))
+            .collect::<Vec<_>>(),
+        vec![11, 11, 14]
+    );
+}
+
+#[test]
 fn panel_disable_suppresses_non_burst_panel_for_one_target_turn() {
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -80,6 +390,83 @@ fn panel_disable_suppresses_non_burst_panel_for_one_target_turn() {
 }
 
 #[test]
+fn negative_panel_immunity_consumes_only_negative_panels() {
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let rules = load_gameplay_rules().unwrap();
+    let fresh = load_fresh_rules().unwrap();
+    let resources = reduce_talk_event(
+        &proto,
+        &fresh,
+        &rules,
+        starter_resources(&proto, &fresh).unwrap(),
+        101001001,
+        1,
+    )
+    .unwrap()
+    .resources;
+    let start = reduce_battle_start(&proto, &rules, resources, 101001002, 1).unwrap();
+    let mut state = start.state;
+    let actor_id = member_id(&current_actor(&state).unwrap()).unwrap();
+    let mut runtime = start.effects;
+    runtime.passives.clear();
+    runtime.instances.clear();
+    runtime.managed.clear();
+    runtime.refresh(&proto, &mut state).unwrap();
+
+    assert_eq!(
+        runtime
+            .apply(
+                &proto,
+                &mut state,
+                actor_id,
+                &[TutorialSkillEffect {
+                    id: 76150005,
+                    value: 0,
+                }],
+                &[actor_id],
+                true,
+                "after",
+                None,
+            )
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(runtime
+        .instances
+        .iter()
+        .any(|instance| { instance.rule.state_id == 510048 && instance.remaining == 2 }));
+
+    set_timeline_panels(&proto, &mut state, &[13], 1, 100).unwrap();
+    assert_eq!(runtime.panel_multiplier(&state).unwrap(), (100, 100));
+    runtime.consume_panel_potency(&state, actor_id).unwrap();
+    assert!(runtime
+        .instances
+        .iter()
+        .any(|instance| { instance.rule.state_id == 510048 && instance.remaining == 1 }));
+
+    set_timeline_panels(&proto, &mut state, &[12], 1, 101).unwrap();
+    runtime.consume_panel_potency(&state, actor_id).unwrap();
+    assert!(runtime
+        .instances
+        .iter()
+        .any(|instance| { instance.rule.state_id == 510048 && instance.remaining == 1 }));
+
+    set_timeline_panels(&proto, &mut state, &[26], 1, 102).unwrap();
+    assert_eq!(runtime.panel_multiplier(&state).unwrap(), (100, 100));
+    runtime.consume_panel_potency(&state, actor_id).unwrap();
+    assert!(!runtime
+        .instances
+        .iter()
+        .any(|instance| { instance.rule.state_id == 510048 }));
+    assert_eq!(runtime.panel_multiplier(&state).unwrap(), (40, 100));
+}
+
+#[test]
 fn offensive_panel_policy_matches_master_data() {
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -127,6 +514,140 @@ fn offensive_panel_policy_matches_master_data() {
 }
 
 #[test]
+fn enhancement_panel_potency_supports_timed_and_passive_sources() {
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let rules = load_gameplay_rules().unwrap();
+    let fresh = load_fresh_rules().unwrap();
+    let resources = reduce_talk_event(
+        &proto,
+        &fresh,
+        &rules,
+        starter_resources(&proto, &fresh).unwrap(),
+        101001001,
+        1,
+    )
+    .unwrap()
+    .resources;
+    let start = reduce_battle_start(&proto, &rules, resources, 101001002, 1).unwrap();
+    let mut state = start.state;
+    let actor_id = member_id(&current_actor(&state).unwrap()).unwrap();
+    let mut runtime = start.effects;
+    runtime.passives.clear();
+    runtime.instances.clear();
+    runtime.managed.clear();
+
+    for value in [2_000, 2_500] {
+        runtime
+            .apply(
+                &proto,
+                &mut state,
+                actor_id,
+                &[TutorialSkillEffect {
+                    id: 71143004,
+                    value,
+                }],
+                &[actor_id],
+                true,
+                "after",
+                None,
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        runtime
+            .instances
+            .iter()
+            .filter(|instance| { instance.rule.operation == "panel_potency" })
+            .count(),
+        1
+    );
+
+    set_timeline_panels(&proto, &mut state, &[12], 1, 101).unwrap();
+    assert_eq!(runtime.panel_multiplier(&state).unwrap(), (150, 100));
+    runtime.consume_panel_potency(&state, actor_id).unwrap();
+    assert_eq!(
+        runtime
+            .instances
+            .iter()
+            .find(|instance| { instance.rule.operation == "panel_potency" })
+            .map(|instance| instance.remaining),
+        Some(1)
+    );
+
+    set_timeline_panels(&proto, &mut state, &[22], 1, 102).unwrap();
+    assert_eq!(runtime.panel_multiplier(&state).unwrap(), (150, 100));
+    assert_eq!(runtime.panel_break_multiplier(&state).unwrap(), 150);
+    runtime.consume_panel_potency(&state, actor_id).unwrap();
+    assert!(!runtime
+        .instances
+        .iter()
+        .any(|instance| { instance.rule.operation == "panel_potency" }));
+    assert_eq!(runtime.panel_multiplier(&state).unwrap(), (140, 100));
+    let passive_rule = rule_for(72001045, "passive", "ability", 1990197)
+        .unwrap()
+        .unwrap()
+        .clone();
+    runtime.passives.push(Passive {
+        source: actor_id,
+        value: 3_000,
+        rule: passive_rule,
+        source_character_id: 0,
+        source_type: 0,
+    });
+    assert_eq!(runtime.panel_multiplier(&state).unwrap(), (152, 100));
+    runtime.passives.clear();
+
+    runtime
+        .apply(
+            &proto,
+            &mut state,
+            actor_id,
+            &[TutorialSkillEffect {
+                id: 71143004,
+                value: 2_500,
+            }],
+            &[actor_id],
+            true,
+            "after",
+            None,
+        )
+        .unwrap();
+    set_timeline_panels(&proto, &mut state, &[33], 1, 103).unwrap();
+    runtime
+        .acquire_current_panel(&proto, &rules, &mut state)
+        .unwrap();
+    assert_eq!(runtime.panel_damage_taken.get(&actor_id), Some(&-5_000));
+
+    let mut members = message_list(&state, "members");
+    let actor = members
+        .iter_mut()
+        .find(|member| member_id(member).ok() == Some(actor_id))
+        .unwrap();
+    let max_hp = i32_field(actor, "max_hp").unwrap();
+    actor.set_field_by_name("hp", Value::I32(1));
+    state.set_field_by_name(
+        "members",
+        Value::List(members.into_iter().map(Value::Message).collect()),
+    );
+    set_timeline_panels(&proto, &mut state, &[42], 1, 104).unwrap();
+    runtime
+        .acquire_current_panel(&proto, &rules, &mut state)
+        .unwrap();
+    let actor = message_list(&state, "members")
+        .into_iter()
+        .find(|member| member_id(member).ok() == Some(actor_id))
+        .unwrap();
+    assert_eq!(
+        i32_field(&actor, "hp"),
+        Some((1 + max_hp * 3_125 / 10_000).min(max_hp))
+    );
+}
+
+#[test]
 fn acquisition_panels_apply_once_and_expire_on_hit() {
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -151,9 +672,13 @@ fn acquisition_panels_apply_once_and_expire_on_hit() {
     let mut runtime = start.effects;
 
     set_timeline_panels(&proto, &mut state, &[33], 1, 101).unwrap();
-    runtime.acquire_current_panel(&mut state).unwrap();
+    runtime
+        .acquire_current_panel(&proto, &rules, &mut state)
+        .unwrap();
     assert_eq!(runtime.panel_damage_taken.get(&actor_id), Some(&-4_000));
-    runtime.acquire_current_panel(&mut state).unwrap();
+    runtime
+        .acquire_current_panel(&proto, &rules, &mut state)
+        .unwrap();
     assert_eq!(runtime.panel_damage_taken.get(&actor_id), Some(&-4_000));
     let actor = message_list(&state, "members")
         .into_iter()
@@ -169,7 +694,9 @@ fn acquisition_panels_apply_once_and_expire_on_hit() {
     assert!(!runtime.panel_damage_taken.contains_key(&actor_id));
 
     set_timeline_panels(&proto, &mut state, &[36], 1, 102).unwrap();
-    runtime.acquire_current_panel(&mut state).unwrap();
+    runtime
+        .acquire_current_panel(&proto, &rules, &mut state)
+        .unwrap();
     assert_eq!(runtime.panel_damage_taken.get(&actor_id), Some(&4_000));
 
     let mut members = message_list(&state, "members");
@@ -184,7 +711,9 @@ fn acquisition_panels_apply_once_and_expire_on_hit() {
         Value::List(members.into_iter().map(Value::Message).collect()),
     );
     set_timeline_panels(&proto, &mut state, &[42], 1, 103).unwrap();
-    runtime.acquire_current_panel(&mut state).unwrap();
+    runtime
+        .acquire_current_panel(&proto, &rules, &mut state)
+        .unwrap();
     let actor = message_list(&state, "members")
         .into_iter()
         .find(|member| member_id(member).ok() == Some(actor_id))
@@ -194,6 +723,20 @@ fn acquisition_panels_apply_once_and_expire_on_hit() {
 
 #[test]
 fn ally_panel_conversion_changes_only_future_eligible_ally_panels() {
+    let quick_mix = rule_for(91001377, "active", "skill", 14001723)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            quick_mix.target.as_str(),
+            quick_mix.phase.as_str(),
+            quick_mix.panel_to_id,
+            quick_mix.panel_limit,
+            quick_mix.weak_only,
+        ),
+        ("allies", "after", 14, 1, true)
+    );
+
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../schemas/atelier-resleriana-2.16.0.protoset"
@@ -223,6 +766,21 @@ fn ally_panel_conversion_changes_only_future_eligible_ally_panels() {
         .find(|member| member_type(member).ok() == Some(1))
         .and_then(|member| i32_field(member, "member_id"))
         .unwrap();
+    let set_fire_resistance = |state: &mut DynamicMessage, value| {
+        let mut members = message_list(state, "members");
+        let enemy = members
+            .iter_mut()
+            .find(|member| member_id(member).ok() == Some(enemy_id))
+            .unwrap();
+        let mut resistance = empty_message(&proto, "blend.model.BattleResistance").unwrap();
+        resistance.set_field_by_name("fire", Value::I32(value));
+        enemy.set_field_by_name("resistance", Value::Message(resistance));
+        state.set_field_by_name(
+            "members",
+            Value::List(members.into_iter().map(Value::Message).collect()),
+        );
+    };
+    set_fire_resistance(&mut state, 0);
     let units = [(source_id, 1), (enemy_id, 1), (source_id, 2), (enemy_id, 2)]
         .into_iter()
         .enumerate()
@@ -245,19 +803,46 @@ fn ally_panel_conversion_changes_only_future_eligible_ally_panels() {
     runtime.instances.clear();
     runtime.managed.clear();
     runtime.refresh(&proto, &mut state).unwrap();
-    let results = runtime
-        .apply(
+    let effect = [TutorialSkillEffect {
+        id: 91001377,
+        value: 100,
+    }];
+    assert!(runtime
+        .apply_for_action_with_rules(
             &proto,
+            &rules,
             &mut state,
             source_id,
-            &[TutorialSkillEffect {
-                id: 91001215,
-                value: 1_000,
-            }],
-            &[source_id],
+            14001723,
+            &effect,
+            &[enemy_id],
             true,
             "after",
             Some(&panel_context),
+            10_000,
+            b"quick-mix-panel-test",
+            &start.start_txid,
+            1,
+        )
+        .unwrap()
+        .is_empty());
+    set_fire_resistance(&mut state, -1);
+    let results = runtime
+        .apply_for_action_with_rules(
+            &proto,
+            &rules,
+            &mut state,
+            source_id,
+            14001723,
+            &effect,
+            &[enemy_id],
+            true,
+            "after",
+            Some(&panel_context),
+            10_000,
+            b"quick-mix-panel-test",
+            &start.start_txid,
+            2,
         )
         .unwrap();
     assert_eq!(results.len(), 1);
@@ -269,14 +854,14 @@ fn ally_panel_conversion_changes_only_future_eligible_ally_panels() {
                 optional_i32_field(panel, "panel_id").unwrap_or(11),
             ))
             .collect::<Vec<_>>(),
-        vec![(3, 12)]
+        vec![(3, 14)]
     );
     assert_eq!(
         message_list(&state, "timeline_panels")
             .iter()
             .map(|panel| optional_i32_field(panel, "panel_id").unwrap_or(11))
             .collect::<Vec<_>>(),
-        vec![13, 11, 12, 14]
+        vec![13, 11, 14, 14]
     );
 }
 

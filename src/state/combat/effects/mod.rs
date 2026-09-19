@@ -8,10 +8,27 @@ mod policy;
 mod registry;
 mod runtime;
 mod runtime_apply;
+mod runtime_battle_tool_party;
+mod runtime_chip;
+mod runtime_cover;
+mod runtime_critical;
+mod runtime_extra_turn;
+mod runtime_form;
+mod runtime_lamp;
+mod runtime_levels;
 mod runtime_lifecycle;
 mod runtime_match;
+mod runtime_nested;
+mod runtime_panel;
+mod runtime_potency;
+mod runtime_random;
+mod runtime_reflection;
+mod runtime_resources;
 mod runtime_results;
+mod runtime_scaling;
 mod runtime_summary;
+mod runtime_targeting;
+mod runtime_triggered_modifiers;
 mod runtime_turn;
 #[cfg(test)]
 mod tests;
@@ -19,10 +36,21 @@ mod tests;
 #[cfg(test)]
 pub(crate) use policy::incoming_multiplier_with_runtime;
 pub(crate) use policy::{
-    healing_amount, incoming_multiplier_for_skill, penetration_factor, secondary_damage,
+    healing_amount, incoming_multiplier_for_skill, penetration_factor,
+    receives_guaranteed_critical, secondary_damage,
 };
-pub(crate) use registry::{registry, validate, Expiry};
-pub(crate) use runtime::{Passive, Runtime};
+pub(crate) use registry::{
+    registry, rule_for, rule_for_occurrence, validate, Expiry, NestedActionKind,
+};
+pub(crate) use runtime::{Passive, PendingAction, Runtime};
+pub(crate) use runtime_cover::Protection;
+pub(crate) use runtime_lamp::{advance_skill_lamp, predicted_skill_lamp, skill_transformation};
 pub(crate) use runtime_match::selected;
+pub(crate) use runtime_resources::add_party_gauge;
 pub(crate) use runtime_results::display;
-pub(crate) use runtime_summary::{instant_summary, timeline_slots};
+pub(crate) use runtime_scaling::{
+    scaled_break_damage, scaled_critical_damage, scaled_skill_damage,
+};
+pub(crate) use runtime_summary::{
+    instant_break_gauge_zero, instant_summary, instant_summary_for_source, timeline_slots,
+};

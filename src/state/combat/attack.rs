@@ -4,28 +4,38 @@ fn apply_timeline_effects(
     proto: &ProtoRegistry,
     units: &mut [DynamicMessage],
     members: &[DynamicMessage],
+    source_id: i32,
+    skill_id: i32,
     source_effects: &[TutorialSkillEffect],
     target_ids: &[i32],
 ) -> Result<Vec<DynamicMessage>, StateError> {
-    let mut targets = Vec::new();
-    for target_id in target_ids.iter().copied() {
-        if !targets.contains(&target_id)
-            && members.iter().any(|member| {
-                i32_field(member, "member_id") == Some(target_id) && bool_field(member, "is_alive")
-            })
-        {
-            targets.push(target_id);
-        }
-    }
     let mut movements = Vec::new();
+    let source = members
+        .iter()
+        .find(|member| member_id(member).ok() == Some(source_id))
+        .ok_or(StateError::InvalidRequest)?;
     for effect in source_effects {
-        let Some(slots) = effects::timeline_slots(effect)? else {
-            continue;
-        };
-        for target_id in targets.iter().copied() {
-            movements.extend(delay_timeline_member_by_slots(
-                proto, units, members, target_id, slots,
-            )?);
+        for target in members
+            .iter()
+            .filter(|member| bool_field(member, "is_alive"))
+        {
+            let Some(slots) =
+                effects::timeline_slots(source, target, skill_id, effect, target_ids)?
+            else {
+                continue;
+            };
+            let target_id = member_id(target)?;
+            movements.extend(if slots > 0 {
+                delay_timeline_member_by_slots(proto, units, members, target_id, slots as usize)?
+            } else {
+                advance_timeline_member_by_slots(
+                    proto,
+                    units,
+                    members,
+                    target_id,
+                    slots.unsigned_abs() as usize,
+                )?
+            });
         }
     }
     Ok(movements)
@@ -44,7 +54,9 @@ pub(crate) fn apply_attack_results(
     runtime: &effects::Runtime,
     target_ids: &[i32],
     panel: (i128, i128),
-    tool: Option<&BattlePartyTool>,
+    tools: Option<&[BattlePartyTool]>,
+    consume_turn: bool,
+    cancelled: bool,
     secret: &[u8],
     start_txid: &str,
     action_number: i32,
@@ -59,9 +71,49 @@ pub(crate) fn apply_attack_results(
     let mut movements = Vec::new();
     let mut total_damage = 0i64;
     let mut killed_ids = Vec::new();
-    let is_tool = tool.is_some();
-    let break_panel = battle_panel_break_multiplier(state);
+    let is_tool = tools.is_some();
+    let break_panel = runtime.panel_break_multiplier(state)?;
     let guaranteed_critical = battle_panel_guarantees_critical(state);
+    let opponent_count = i32::try_from(
+        members
+            .iter()
+            .filter(|member| {
+                bool_field(member, "is_alive") && member_type(member).ok() != Some(actor_type)
+            })
+            .count(),
+    )
+    .map_err(|_| StateError::InvalidRequest)?;
+
+    if cancelled {
+        for target_id in target_ids {
+            let mut result = build_skill_result(
+                proto, *target_id, 0, 0, 0, 0, false, false, false, false, false, false, false,
+            )?;
+            result.set_field_by_name("is_invalid", Value::Bool(true));
+            results.push(result);
+        }
+        if consume_turn {
+            let speed = i32_field(
+                &member_status(&members[actor_index], "current_status")?,
+                "speed",
+            )
+            .ok_or(StateError::InvalidRequest)?;
+            movements.push(consume_timeline_turn(
+                proto,
+                &mut units,
+                &members,
+                actor_id,
+                action_wait(speed, skill.wait),
+                base_wait(speed),
+                actor_type == 1,
+            )?);
+        }
+        state.set_field_by_name(
+            "timeline_units",
+            Value::List(units.into_iter().map(Value::Message).collect()),
+        );
+        return Ok((results, movements, 0));
+    }
 
     // Supported effect rules run before/after this base HP/break operation.
     // Unrecovered catalog effects remain in the runtime's explicit unresolved set.
@@ -91,10 +143,10 @@ pub(crate) fn apply_attack_results(
             let max_hp = i32_field(&members[target_index], "max_hp")
                 .ok_or(StateError::InvalidRequest)?
                 .max(0);
-            let heal = if let Some(tool) = tool {
+            let heal = if let Some(tools) = tools {
                 policy_tool_heal(
                     rules,
-                    tool,
+                    tools,
                     skill,
                     &members[actor_index],
                     &members[target_index],
@@ -130,7 +182,7 @@ pub(crate) fn apply_attack_results(
         }
         let draw_index = u32::try_from(draw_index).map_err(|_| StateError::InvalidRequest)?;
         if !is_tool
-            && deterministic_roll(
+            && (deterministic_roll(
                 secret,
                 start_txid,
                 action_number,
@@ -139,6 +191,15 @@ pub(crate) fn apply_attack_results(
                 draw_index,
             ) % 10_000
                 < runtime.blind_rate(actor_id) as u32
+                || deterministic_roll(
+                    secret,
+                    start_txid,
+                    action_number,
+                    b"evasion",
+                    target_id,
+                    draw_index,
+                ) % 10_000
+                    < runtime.evasion_rate(target_id) as u32)
         {
             let mut miss = build_skill_result(
                 proto, target_id, 0, 0, 0, 0, false, false, false, false, false, false, false,
@@ -147,8 +208,25 @@ pub(crate) fn apply_attack_results(
             results.push(miss);
             continue;
         }
-        let critical = !is_tool
-            && (guaranteed_critical
+        let critical_rate = if is_tool {
+            runtime.battle_tool_party_bonus(rules, &members, "critical")?
+        } else {
+            (1_000i64 + i64::from(state_change_summary_value(&members[actor_index], 6)))
+                .clamp(0, 10_000) as i32
+        };
+        let critical = if is_tool {
+            deterministic_roll(
+                secret,
+                start_txid,
+                action_number,
+                b"critical",
+                target_id,
+                draw_index,
+            ) % 10_000
+                < critical_rate.clamp(0, 10_000) as u32
+        } else {
+            guaranteed_critical
+                || effects::receives_guaranteed_critical(&members[target_index])
                 || (actor_type == 0
                     && deterministic_roll(
                         secret,
@@ -158,9 +236,8 @@ pub(crate) fn apply_attack_results(
                         target_id,
                         draw_index,
                     ) % 10_000
-                        < (1_000i64
-                            + i64::from(state_change_summary_value(&members[actor_index], 6)))
-                        .clamp(0, 10_000) as u32));
+                        < critical_rate as u32)
+        };
         let variance = 10_000
             + deterministic_roll(
                 secret,
@@ -170,15 +247,16 @@ pub(crate) fn apply_attack_results(
                 target_id,
                 draw_index,
             ) % 101;
-        let damage = if let Some(tool) = tool {
+        let damage = if let Some(tools) = tools {
             policy_tool_damage(
                 rules,
-                tool,
+                tools,
                 &members,
                 &members[target_index],
                 skill,
                 Some(runtime),
                 target_broken,
+                critical,
                 variance,
             )?
         } else if actor_type == 1 {
@@ -211,6 +289,7 @@ pub(crate) fn apply_attack_results(
                 skill,
                 resources,
                 Some(runtime),
+                opponent_count,
                 panel,
                 target_broken,
                 critical,
@@ -235,13 +314,24 @@ pub(crate) fn apply_attack_results(
                 &members[target_index],
                 skill,
                 Some(runtime),
+                opponent_count,
                 critical,
             )?
         } else {
             damage
         };
-        let critical_damage = if is_tool {
-            0
+        let critical_damage = if let Some(tools) = tools {
+            policy_tool_damage(
+                rules,
+                tools,
+                &members,
+                &members[target_index],
+                skill,
+                Some(runtime),
+                target_broken,
+                true,
+                variance,
+            )?
         } else if actor_type == 1 {
             if critical {
                 damage
@@ -257,19 +347,22 @@ pub(crate) fn apply_attack_results(
                 skill,
                 resources,
                 Some(runtime),
+                opponent_count,
                 panel,
                 target_broken,
                 true,
                 variance,
             )?
         };
-        let break_damage = if !is_tool && target_enemy.is_some() {
+        let mut break_damage = if !is_tool && target_enemy.is_some() {
             policy_break_damage(
                 &members[actor_index],
                 &members[target_index],
                 skill,
                 Some(runtime),
+                Some((rules, &members)),
                 break_panel,
+                critical,
                 variance,
             )?
         } else {
@@ -287,6 +380,9 @@ pub(crate) fn apply_attack_results(
         let mut newly_broken = false;
         if let Some(mut enemy) = target_enemy {
             let old_break = i32_field(&enemy, "break_gauge").unwrap_or(0).max(0);
+            if !is_tool && effects::instant_break_gauge_zero(skill, &members[target_index])? {
+                break_damage = break_damage.max(old_break);
+            }
             let new_break = old_break.saturating_sub(break_damage).max(0);
             newly_broken = old_break > 0 && new_break == 0;
             enemy.set_field_by_name("break_gauge", Value::I32(new_break));
@@ -331,11 +427,18 @@ pub(crate) fn apply_attack_results(
         .iter()
         .filter(|result| !bool_field(result, "is_miss") && !bool_field(result, "is_invalid"))
         .filter_map(|result| i32_field(result, "target_id"))
-        .collect::<Vec<_>>();
+        .fold(Vec::new(), |mut ids, id| {
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+            ids
+        });
     movements.extend(apply_timeline_effects(
         proto,
         &mut units,
         &members,
+        actor_id,
+        skill.id,
         source_effects,
         &effect_targets,
     )?);
@@ -349,7 +452,7 @@ pub(crate) fn apply_attack_results(
         )?);
     }
 
-    if !is_tool {
+    if consume_turn {
         let actor = &members[actor_index];
         let speed = member_status(actor, "current_status")?
             .get_field_by_name("speed")
@@ -374,6 +477,411 @@ pub(crate) fn apply_attack_results(
         Value::List(units.into_iter().map(Value::Message).collect()),
     );
     Ok((results, movements, total_damage))
+}
+
+struct ResolvedSkillAction {
+    skill_results: Vec<DynamicMessage>,
+    before_effect_results: Vec<DynamicMessage>,
+    effect_results: Vec<DynamicMessage>,
+    timeline_moves: Vec<DynamicMessage>,
+    total_damage: i64,
+    pending_actions: Vec<effects::PendingAction>,
+    protection: Option<effects::Protection>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_skill_action(
+    proto: &ProtoRegistry,
+    rules: &TutorialRules,
+    state: &mut DynamicMessage,
+    actor_id: i32,
+    actor_type: i32,
+    skill: &TutorialSkill,
+    source_effects: &[TutorialSkillEffect],
+    resources: Option<&DynamicMessage>,
+    runtime: &mut effects::Runtime,
+    target_ids: &[i32],
+    panel: (i128, i128),
+    tools: Option<&[BattlePartyTool]>,
+    consume_turn: bool,
+    consume_panel: bool,
+    allow_nested: bool,
+    secret: &[u8],
+    transaction: &str,
+    action_number: i32,
+) -> Result<ResolvedSkillAction, StateError> {
+    let panel_context = state.clone();
+    let actor = message_list(state, "members")
+        .into_iter()
+        .find(|member| member_id(member).ok() == Some(actor_id))
+        .ok_or(StateError::InvalidRequest)?;
+    let transformation = tools
+        .is_none()
+        .then(|| effects::skill_transformation(&actor, skill.id))
+        .transpose()?
+        .flatten();
+    let transformed_skill = transformation
+        .map(|(_, destination)| rule_skill(rules, destination).cloned())
+        .transpose()?;
+    let effective_skill = transformed_skill.as_ref().unwrap_or(skill);
+    let effective_effects = transformed_skill
+        .as_ref()
+        .map_or(source_effects, |skill| skill.effects.as_slice());
+    let (target_ids, protection) =
+        runtime.redirect_targets(state, actor_type, effective_skill, target_ids)?;
+    let effect_target_ids = target_ids.iter().copied().fold(Vec::new(), |mut ids, id| {
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+        ids
+    });
+    let special_counter = if allow_nested {
+        runtime.collect_special_counter(
+            rules,
+            state,
+            actor_id,
+            effective_skill,
+            &target_ids,
+            secret,
+            transaction,
+            action_number,
+        )?
+    } else {
+        None
+    };
+    let cancelled = special_counter.is_some();
+    let mut before_effect_results = Vec::new();
+    if !cancelled {
+        if tools.is_none() {
+            before_effect_results.extend(runtime.trigger_attack_before(
+                proto,
+                state,
+                actor_id,
+                effective_skill,
+                &effect_target_ids,
+            )?);
+        }
+        if let Some((effect_id, _)) = transformation {
+            let form_effects = source_effects
+                .iter()
+                .filter(|effect| effect.id == effect_id)
+                .cloned()
+                .collect::<Vec<_>>();
+            before_effect_results.extend(runtime.apply_for_action_with_rules(
+                proto,
+                rules,
+                state,
+                actor_id,
+                skill.id,
+                &form_effects,
+                &effect_target_ids,
+                true,
+                "before",
+                Some(&panel_context),
+                skill.state_change_application_rate,
+                secret,
+                transaction,
+                action_number,
+            )?);
+        }
+        before_effect_results.extend(runtime.apply_for_action_with_rules(
+            proto,
+            rules,
+            state,
+            actor_id,
+            effective_skill.id,
+            effective_effects,
+            &effect_target_ids,
+            tools.is_none(),
+            "before",
+            Some(&panel_context),
+            effective_skill.state_change_application_rate,
+            secret,
+            transaction,
+            action_number,
+        )?);
+    }
+    let (mut skill_results, mut timeline_moves, total_damage) = apply_attack_results(
+        proto,
+        rules,
+        state,
+        actor_id,
+        actor_type,
+        effective_skill,
+        effective_effects,
+        resources,
+        runtime,
+        &target_ids,
+        panel,
+        tools,
+        consume_turn,
+        cancelled,
+        secret,
+        transaction,
+        action_number,
+    )?;
+    let reflection_results = if !cancelled && tools.is_none() {
+        let (results, movements) = runtime.reflect_magic_damage(
+            proto,
+            state,
+            actor_id,
+            effective_skill,
+            &skill_results,
+        )?;
+        timeline_moves.extend(movements);
+        results
+    } else {
+        Vec::new()
+    };
+    for target_id in skill_results
+        .iter()
+        .filter(|result| bool_field(result, "is_killed"))
+        .filter_map(|result| i32_field(result, "target_id"))
+    {
+        runtime.discard_extra_turns(target_id);
+    }
+    for target_id in reflection_results
+        .iter()
+        .filter(|result| bool_field(result, "is_killed"))
+        .filter_map(|result| i32_field(result, "target_id"))
+    {
+        runtime.discard_extra_turns(target_id);
+    }
+    runtime.expire_with_attributes(
+        actor_id,
+        &skill_results,
+        consume_turn,
+        !cancelled && tools.is_none() && effective_skill.skill_effect_type == 1,
+        &effective_skill.attack_attributes,
+    );
+    if consume_panel {
+        runtime.consume_panel_potency(&panel_context, actor_id)?;
+    }
+    let mut effect_results = Vec::new();
+    let mut pending_actions = special_counter.into_iter().collect::<Vec<_>>();
+    if !cancelled {
+        let effect_targets = skill_results
+            .iter()
+            .filter(|result| !bool_field(result, "is_miss") && !bool_field(result, "is_invalid"))
+            .filter_map(|result| i32_field(result, "target_id"))
+            .fold(Vec::new(), |mut ids, id| {
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+                ids
+            });
+        effect_results = runtime.apply_for_action_with_rules(
+            proto,
+            rules,
+            state,
+            actor_id,
+            effective_skill.id,
+            effective_effects,
+            &effect_targets,
+            tools.is_none(),
+            "after",
+            Some(&panel_context),
+            effective_skill.state_change_application_rate,
+            secret,
+            transaction,
+            action_number,
+        )?;
+        if consume_turn && tools.is_none() && transformation.is_none() {
+            effects::advance_skill_lamp(state, actor_id, skill.id)?;
+        }
+        effect_results.extend(runtime.trigger_lamps_after_action(
+            proto,
+            rules,
+            state,
+            &panel_context,
+            actor_id,
+            effective_skill,
+            &skill_results,
+            tools.is_none(),
+        )?);
+        if tools.is_none() {
+            effect_results.extend(runtime.trigger_attack_after(
+                proto,
+                rules,
+                state,
+                actor_id,
+                effective_skill,
+                &skill_results,
+            )?);
+            if actor_type == 0 {
+                let bonus = runtime.battle_tool_party_bonus(
+                    rules,
+                    &message_list(state, "members"),
+                    "gauge",
+                )?;
+                if bonus > 0 {
+                    effects::add_party_gauge(state, bonus)?;
+                }
+            }
+            if allow_nested {
+                pending_actions.extend(runtime.collect_nested_actions(
+                    rules,
+                    state,
+                    actor_id,
+                    effective_skill,
+                    &skill_results,
+                    secret,
+                    transaction,
+                    action_number,
+                )?);
+            }
+        }
+    }
+    timeline_moves.extend(runtime.apply_pending_extra_turns(proto, state)?);
+    runtime.refresh(proto, state)?;
+    skill_results.extend(reflection_results);
+    Ok(ResolvedSkillAction {
+        skill_results,
+        before_effect_results,
+        effect_results,
+        timeline_moves,
+        total_damage,
+        pending_actions,
+        protection: (!cancelled).then_some(protection).flatten(),
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_nested_actions(
+    proto: &ProtoRegistry,
+    rules: &TutorialRules,
+    state: &mut DynamicMessage,
+    runtime: &mut effects::Runtime,
+    resources: Option<&DynamicMessage>,
+    secret: &[u8],
+    transaction: &str,
+    total_turn: i32,
+    pending: Vec<effects::PendingAction>,
+    actions: &mut Vec<DynamicMessage>,
+    action_number: &mut i32,
+    generated_actions: &mut usize,
+) -> Result<(), StateError> {
+    for pending in pending {
+        if *generated_actions >= 10_000 {
+            return Err(StateError::TutorialRules(
+                "battle scheduler exceeded 10,000 generated actions".into(),
+            ));
+        }
+        let members = message_list(state, "members");
+        let Some(actor) = members.iter().find(|member| {
+            i32_field(member, "member_id") == Some(pending.actor_id)
+                && bool_field(member, "is_alive")
+        }) else {
+            continue;
+        };
+        if !members.iter().any(|member| {
+            i32_field(member, "member_id") == Some(pending.target_id)
+                && bool_field(member, "is_alive")
+        }) {
+            continue;
+        }
+        let actor_type = member_type(actor)?;
+        let skill = rule_skill(rules, pending.skill_id)?;
+        let targets = select_target_ids(
+            state,
+            pending.actor_id,
+            actor_type,
+            pending.target_id,
+            skill,
+        )?;
+        let resolved = resolve_skill_action(
+            proto,
+            rules,
+            state,
+            pending.actor_id,
+            actor_type,
+            skill,
+            &skill.effects,
+            resources,
+            runtime,
+            &targets,
+            runtime.panel_multiplier(state)?,
+            None,
+            false,
+            false,
+            false,
+            secret,
+            transaction,
+            *action_number,
+        )?;
+        heal_nested_burst_gauge(rules, state, pending.actor_id, pending.kind)?;
+        state.set_field_by_name("total_turn", Value::I32(total_turn));
+        refresh_burst_enable(rules, state)?;
+        let mut action = build_action(
+            proto,
+            *action_number,
+            state.clone(),
+            actor_type,
+            pending.actor_id,
+            skill,
+            pending.target_id,
+            resolved.skill_results,
+            resolved.before_effect_results,
+            resolved.effect_results,
+            resolved.timeline_moves,
+            0,
+            None,
+            resolved.total_damage,
+            resolved.protection,
+        )?;
+        match pending.kind {
+            effects::NestedActionKind::Counter => {
+                action.set_field_by_name("is_counter", Value::Bool(true));
+            }
+            effects::NestedActionKind::AdditionalAttack => {
+                action.set_field_by_name("is_additional_attack", Value::Bool(true));
+            }
+            effects::NestedActionKind::SpecialCounter => {
+                action.set_field_by_name("is_special_counter", Value::Bool(true));
+            }
+        }
+        actions.push(action);
+        *action_number = action_number
+            .checked_add(1)
+            .ok_or(StateError::InvalidRequest)?;
+        *generated_actions += 1;
+    }
+    Ok(())
+}
+
+fn heal_nested_burst_gauge(
+    rules: &TutorialRules,
+    state: &mut DynamicMessage,
+    actor_id: i32,
+    kind: effects::NestedActionKind,
+) -> Result<(), StateError> {
+    let gain = match kind {
+        effects::NestedActionKind::AdditionalAttack => {
+            rules.constants.burst_gauge_heal_additional_attack
+        }
+        effects::NestedActionKind::Counter | effects::NestedActionKind::SpecialCounter => {
+            rules.constants.burst_gauge_heal_counter
+        }
+    };
+    let mut members = message_list(state, "members");
+    let actor = members
+        .iter_mut()
+        .find(|member| i32_field(member, "member_id") == Some(actor_id))
+        .ok_or(StateError::InvalidRequest)?;
+    let mut gauge = member_status(actor, "burst_gauge")?;
+    let current = i32_field(&gauge, "current_gauge").unwrap_or_default();
+    let maximum = i32_field(&gauge, "max_gauge")
+        .unwrap_or(rules.constants.burst_gauge_required_for_one_burst_skill);
+    gauge.set_field_by_name(
+        "current_gauge",
+        Value::I32(current.saturating_add(gain).min(maximum)),
+    );
+    actor.set_field_by_name("burst_gauge", Value::Message(gauge));
+    state.set_field_by_name(
+        "members",
+        Value::List(members.into_iter().map(Value::Message).collect()),
+    );
+    Ok(())
 }
 
 pub(crate) fn refresh_burst_enable(
@@ -426,7 +934,7 @@ pub(crate) fn reduce_battle_attack_with_effects(
 ) -> Result<BattleAttackMutation, StateError> {
     effect_runtime.prepare(&state, start_txid)?;
     effect_runtime.refresh(proto, &mut state)?;
-    effect_runtime.acquire_current_panel(&mut state)?;
+    effect_runtime.acquire_current_panel(proto, rules, &mut state)?;
     let mode = i32_or_enum_field(request, "mode").ok_or(StateError::InvalidRequest)?;
     let command_fields = [
         "skill_command",
@@ -441,11 +949,16 @@ pub(crate) fn reduce_battle_attack_with_effects(
         .iter()
         .filter(|field| request.has_field_by_name(field))
         .count();
-    if (mode == 0 && (present != 1 || !request.has_field_by_name("skill_command")))
-        || (mode == 1 && (present != 1 || !request.has_field_by_name("battle_tool_command")))
-        || (mode == 6 && present != 0)
-        || !matches!(mode, 0 | 1 | 6)
-    {
+    let valid_command = match mode {
+        0 => present == 1 && request.has_field_by_name("skill_command"),
+        1 => present == 1 && request.has_field_by_name("battle_tool_command"),
+        6 => present == 0,
+        7 => present == 1 && request.has_field_by_name("active_skill_command"),
+        8 => present == 1 && request.has_field_by_name("battle_tool_mix_command"),
+        9 => present == 1 && request.has_field_by_name("ship_tool_command"),
+        _ => false,
+    };
+    if !valid_command {
         return Err(StateError::InvalidRequest);
     }
     validate_formation(request, &state)?;
@@ -482,9 +995,13 @@ pub(crate) fn reduce_battle_attack_with_effects(
             Some(effect_runtime),
         )?);
     } else {
-        let mut total_turn = turn_number
-            .checked_add(1)
-            .ok_or(StateError::InvalidRequest)?;
+        let mut total_turn = if mode == 7 {
+            turn_number
+        } else {
+            turn_number
+                .checked_add(1)
+                .ok_or(StateError::InvalidRequest)?
+        };
         let actor = current_actor(&state)?;
         let actor_id = member_id(&actor)?;
         let actor_type = member_type(&actor)?;
@@ -492,14 +1009,15 @@ pub(crate) fn reduce_battle_attack_with_effects(
             return Err(StateError::InvalidRequest);
         }
         let mut panel_only_burst = false;
-        type ActionSpec<'a> = (
-            &'a TutorialSkill,
-            i32,
-            i32,
-            Option<i32>,
-            Option<BattlePartyTool>,
-        );
-        let mut action_specs: Vec<ActionSpec<'_>> = Vec::new();
+        struct ActionSpec {
+            skill: TutorialSkill,
+            target_id: i32,
+            mode: i32,
+            command_value: Option<i32>,
+            battle_tool_numbers: Vec<i32>,
+            battle_tools: Vec<BattlePartyTool>,
+        }
+        let mut action_specs = Vec::new();
         if mode == 0 {
             let command = request
                 .get_field_by_name("skill_command")
@@ -508,14 +1026,23 @@ pub(crate) fn reduce_battle_attack_with_effects(
             let skill_type = i32_field(&command, "skill_type").ok_or(StateError::InvalidRequest)?;
             let target_id =
                 i32_field(&command, "main_target_id").ok_or(StateError::InvalidRequest)?;
-            if !(1..=3).contains(&skill_type) {
-                return Err(StateError::InvalidRequest);
-            }
-            let selected = member_skills(&actor)?
-                .into_iter()
-                .find(|selected| selected.skill_type == skill_type)
-                .ok_or(StateError::InvalidRequest)?;
-            let selected_skill = rule_skill(rules, selected.id)?;
+            let extra_skill_id = effect_runtime.current_extra_skill(&state)?;
+            let selected_skill = if skill_type == 0 {
+                let skill = rule_skill(rules, extra_skill_id.ok_or(StateError::InvalidRequest)?)?;
+                if skill.skill_type != 0 {
+                    return Err(StateError::InvalidRequest);
+                }
+                skill
+            } else {
+                if extra_skill_id.is_some() || !(1..=3).contains(&skill_type) {
+                    return Err(StateError::InvalidRequest);
+                }
+                let selected = member_skills(&actor)?
+                    .into_iter()
+                    .find(|selected| selected.skill_type == skill_type)
+                    .ok_or(StateError::InvalidRequest)?;
+                rule_skill(rules, selected.id)?
+            };
             if selected_skill.skill_target_type == Some(3)
                 && effect_runtime
                     .provocation_target(actor_id)
@@ -536,8 +1063,113 @@ pub(crate) fn reduce_battle_attack_with_effects(
                     < rules.constants.burst_gauge_required_for_one_burst_skill
                     && is_burst_panel_id(panel_id);
             }
-            action_specs.push((selected_skill, target_id, 0, None, None));
-        } else {
+            if skill_type == 0 {
+                effect_runtime
+                    .take_current_extra_skill(&state)?
+                    .ok_or(StateError::InvalidRequest)?;
+            }
+            action_specs.push(ActionSpec {
+                skill: selected_skill.clone(),
+                target_id,
+                mode: 0,
+                command_value: None,
+                battle_tool_numbers: Vec::new(),
+                battle_tools: Vec::new(),
+            });
+        } else if mode == 7 {
+            let command = request
+                .get_field_by_name("active_skill_command")
+                .and_then(|value| value.as_message().cloned())
+                .ok_or(StateError::InvalidRequest)?;
+            let active_skill_type =
+                i32_field(&command, "active_skill_type").ok_or(StateError::InvalidRequest)?;
+            let target_id =
+                i32_field(&command, "main_target_id").ok_or(StateError::InvalidRequest)?;
+            let selected = member_active_skills(&actor)?
+                .into_iter()
+                .find(|selected| selected.skill_type == active_skill_type)
+                .ok_or(StateError::InvalidRequest)?;
+            let selected_skill = rule_skill(rules, selected.id)?;
+            if selected_skill.require_command_value != command.has_field_by_name("value") {
+                return Err(StateError::InvalidRequest);
+            }
+            let mut members = message_list(&state, "members");
+            let member = members
+                .iter_mut()
+                .find(|member| i32_field(member, "member_id") == Some(actor_id))
+                .ok_or(StateError::InvalidRequest)?;
+            let mut ally = member_status(member, "ally")?;
+            let mut active_skills = message_list(&ally, "active_skills");
+            let active = active_skills
+                .iter_mut()
+                .find(|candidate| {
+                    i32_field(candidate, "active_skill_type") == Some(active_skill_type)
+                })
+                .ok_or(StateError::InvalidRequest)?;
+            let remaining = optional_i32_field(active, "rest_count").unwrap_or(0);
+            if remaining <= 0 {
+                return Err(StateError::InvalidRequest);
+            }
+            active.set_field_by_name(
+                "rest_count",
+                Value::Message(wrapper_i32(proto, remaining - 1)?),
+            );
+            ally.set_field_by_name(
+                "active_skills",
+                Value::List(active_skills.into_iter().map(Value::Message).collect()),
+            );
+            member.set_field_by_name("ally", Value::Message(ally));
+            state.set_field_by_name(
+                "members",
+                Value::List(members.into_iter().map(Value::Message).collect()),
+            );
+            action_specs.push(ActionSpec {
+                skill: selected_skill.clone(),
+                target_id,
+                mode: 7,
+                command_value: Some(active_skill_type),
+                battle_tool_numbers: Vec::new(),
+                battle_tools: Vec::new(),
+            });
+        } else if mode == 8 {
+            let command = request
+                .get_field_by_name("battle_tool_mix_command")
+                .and_then(|value| value.as_message().cloned())
+                .ok_or(StateError::InvalidRequest)?;
+            let numbers = i32_list(&command, "battle_tool_numbers");
+            let battle_tools = message_list(&state, "battle_tools");
+            if numbers.len() != 2
+                || numbers[0] == numbers[1]
+                || i32_field(&state, "party_gauge").unwrap_or(0) < rules.constants.max_party_gauge
+                || !member_can_use_battle_tool_mix(rules, &state, actor_id)?
+            {
+                return Err(StateError::InvalidRequest);
+            }
+            let selected_tools = numbers
+                .iter()
+                .map(|number| {
+                    let tool = battle_tools
+                        .iter()
+                        .find(|tool| i32_field(tool, "number") == Some(*number))
+                        .ok_or(StateError::InvalidRequest)?;
+                    if i32_field(tool, "usage_count").ok_or(StateError::InvalidRequest)? <= 0 {
+                        return Err(StateError::InvalidRequest);
+                    }
+                    battle_party_tool_from_state(rules, tool)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let skill = battle_tool_mix_skill(rules, &selected_tools[0], &selected_tools[1])?;
+            let target_id = member_id(&earliest_living_member(&state, Some(1))?)?;
+            action_specs.push(ActionSpec {
+                skill,
+                target_id,
+                mode: 8,
+                command_value: None,
+                battle_tool_numbers: numbers,
+                battle_tools: selected_tools,
+            });
+            state.set_field_by_name("party_gauge", Value::I32(0));
+        } else if mode == 1 {
             let command = request
                 .get_field_by_name("battle_tool_command")
                 .and_then(|value| value.as_message().cloned())
@@ -574,51 +1206,97 @@ pub(crate) fn reduce_battle_attack_with_effects(
                 } else {
                     member_id(&earliest_living_member(&state, Some(1))?)?
                 };
-                action_specs.push((skill, target_id, 1, Some(number), Some(selected_tool)));
+                action_specs.push(ActionSpec {
+                    skill: skill.clone(),
+                    target_id,
+                    mode: 1,
+                    command_value: Some(number),
+                    battle_tool_numbers: vec![number],
+                    battle_tools: vec![selected_tool],
+                });
             }
             state.set_field_by_name("party_gauge", Value::I32(0));
+        } else {
+            let command = request
+                .get_field_by_name("ship_tool_command")
+                .and_then(|value| value.as_message().cloned())
+                .ok_or(StateError::InvalidRequest)?;
+            let number =
+                i32_field(&command, "ship_tool_number").ok_or(StateError::InvalidRequest)?;
+            if i32_field(&state, "bomb_gauge").unwrap_or_default() < rules.constants.max_bomb_gauge
+            {
+                return Err(StateError::InvalidRequest);
+            }
+            let tool = message_list(&state, "ship_tools")
+                .into_iter()
+                .find(|tool| i32_field(tool, "number") == Some(number))
+                .filter(|tool| i32_field(tool, "usage_count").unwrap_or_default() > 0)
+                .ok_or(StateError::InvalidRequest)?;
+            let skill = rule_skill(
+                rules,
+                i32_field(&tool, "skill_id").ok_or(StateError::InvalidRequest)?,
+            )?;
+            let target_id = if matches!(skill.skill_target_type, Some(2 | 4)) {
+                member_id(&most_injured_living_member(&state, 0)?)?
+            } else {
+                member_id(&earliest_living_member(&state, Some(1))?)?
+            };
+            action_specs.push(ActionSpec {
+                skill: skill.clone(),
+                target_id,
+                mode: 9,
+                command_value: Some(number),
+                battle_tool_numbers: Vec::new(),
+                battle_tools: Vec::new(),
+            });
+            state.set_field_by_name("bomb_gauge", Value::I32(0));
         }
         let action_count = action_specs.len();
         let mut generated_actions = 0usize;
-        for (action_index, (skill, target_id, action_type, selected_tool_number, selected_tool)) in
-            action_specs.into_iter().enumerate()
-        {
-            let panel_context = state.clone();
-            let action_targets = select_target_ids(&state, actor_type, target_id, skill)?;
-            let panel = battle_panel_multiplier(&state);
-            if let Some(number) = selected_tool_number {
+        for (action_index, action) in action_specs.into_iter().enumerate() {
+            let skill = &action.skill;
+            let target_id = action.target_id;
+            let action_mode = action.mode;
+            let command_value = action.command_value;
+            let action_targets = select_target_ids(&state, actor_id, actor_type, target_id, skill)?;
+            let panel = effect_runtime.panel_multiplier(&state)?;
+            let consumes_panel =
+                action_mode != 7 && (mode != 1 || action_index + 1 == action_count);
+            if matches!(action_mode, 1 | 8) {
                 let mut tools = message_list(&state, "battle_tools");
-                let tool = tools
-                    .iter_mut()
-                    .find(|tool| i32_field(tool, "number") == Some(number))
-                    .ok_or(StateError::InvalidRequest)?;
-                let usage = i32_field(tool, "usage_count").ok_or(StateError::InvalidRequest)?;
-                tool.set_field_by_name("usage_count", Value::I32(usage - 1));
+                for number in &action.battle_tool_numbers {
+                    let tool = tools
+                        .iter_mut()
+                        .find(|tool| i32_field(tool, "number") == Some(*number))
+                        .ok_or(StateError::InvalidRequest)?;
+                    let usage = i32_field(tool, "usage_count").ok_or(StateError::InvalidRequest)?;
+                    tool.set_field_by_name("usage_count", Value::I32(usage - 1));
+                }
                 state.set_field_by_name(
                     "battle_tools",
                     Value::List(tools.into_iter().map(Value::Message).collect()),
                 );
             }
+            if action_mode == 9 {
+                let mut tools = message_list(&state, "ship_tools");
+                let tool = tools
+                    .iter_mut()
+                    .find(|tool| i32_field(tool, "number") == command_value)
+                    .ok_or(StateError::InvalidRequest)?;
+                let usage = i32_field(tool, "usage_count").ok_or(StateError::InvalidRequest)?;
+                tool.set_field_by_name("usage_count", Value::I32(usage - 1));
+                state.set_field_by_name(
+                    "ship_tools",
+                    Value::List(tools.into_iter().map(Value::Message).collect()),
+                );
+            }
             let mut source_effects = skill.effects.clone();
-            if let Some(tool) = selected_tool.as_ref() {
+            for tool in &action.battle_tools {
                 source_effects.extend(battle_tool_effects(rules, tool)?);
             }
-            let before_skill_effect_results = effect_runtime.apply_for_action(
-                proto,
-                &mut state,
-                actor_id,
-                skill.id,
-                &source_effects,
-                &action_targets,
-                selected_tool.is_none(),
-                "before",
-                Some(&panel_context),
-                skill.state_change_application_rate,
-                secret,
-                start_txid,
-                action_number,
-            )?;
-            let (skill_results, timeline_moves, total_damage) = apply_attack_results(
+            let policy_tools =
+                matches!(action_mode, 1 | 8 | 9).then_some(action.battle_tools.as_slice());
+            let mut resolved = resolve_skill_action(
                 proto,
                 rules,
                 &mut state,
@@ -630,52 +1308,18 @@ pub(crate) fn reduce_battle_attack_with_effects(
                 effect_runtime,
                 &action_targets,
                 panel,
-                selected_tool.as_ref(),
+                policy_tools,
+                action_mode == 0,
+                consumes_panel,
+                policy_tools.is_none(),
                 secret,
                 start_txid,
                 action_number,
             )?;
-            effect_runtime.expire(
-                actor_id,
-                &skill_results,
-                selected_tool.is_none(),
-                skill.skill_effect_type == 1,
-            );
-            let effect_targets = skill_results
-                .iter()
-                .filter(|result| {
-                    !bool_field(result, "is_miss") && !bool_field(result, "is_invalid")
-                })
-                .filter_map(|result| i32_field(result, "target_id"))
-                .collect::<Vec<_>>();
-            let mut effect_results = effect_runtime.apply_for_action(
-                proto,
-                &mut state,
-                actor_id,
-                skill.id,
-                &source_effects,
-                &effect_targets,
-                selected_tool.is_none(),
-                "after",
-                Some(&panel_context),
-                skill.state_change_application_rate,
-                secret,
-                start_txid,
-                action_number,
-            )?;
-            if selected_tool.is_none() {
-                effect_results.extend(effect_runtime.trigger_attack_after(
-                    proto,
-                    &mut state,
-                    actor_id,
-                    skill,
-                    &skill_results,
-                )?);
-            }
             // A multi-tool command emits one action per tool but consumes one panel.
-            if mode != 1 || action_index + 1 == action_count {
+            if consumes_panel {
                 consume_timeline_panel(proto, rules, &mut state)?;
-                effect_runtime.acquire_current_panel(&mut state)?;
+                effect_runtime.acquire_current_panel(proto, rules, &mut state)?;
             }
 
             let mut members = message_list(&state, "members");
@@ -683,9 +1327,11 @@ pub(crate) fn reduce_battle_attack_with_effects(
                 .iter_mut()
                 .find(|member| i32_field(member, "member_id") == Some(actor_id))
                 .ok_or(StateError::InvalidRequest)?;
-            if selected_tool_number.is_none() {
+            if action_mode == 0 {
                 let mut gauge = member_status(member, "burst_gauge")?;
                 let old = i32_field(&gauge, "current_gauge").unwrap_or(0);
+                let maximum = i32_field(&gauge, "max_gauge")
+                    .unwrap_or(rules.constants.burst_gauge_required_for_one_burst_skill);
                 let gain = match skill.skill_type {
                     1 => rules.constants.burst_gauge_heal_normal1,
                     2 => rules.constants.burst_gauge_heal_normal2,
@@ -698,8 +1344,7 @@ pub(crate) fn reduce_battle_attack_with_effects(
                         old.saturating_sub(rules.constants.burst_gauge_required_for_one_burst_skill)
                     }
                 } else {
-                    old.saturating_add(gain)
-                        .min(rules.constants.burst_gauge_required_for_one_burst_skill)
+                    old.saturating_add(gain).min(maximum)
                 };
                 gauge.set_field_by_name("current_gauge", Value::I32(next));
                 member.set_field_by_name("burst_gauge", Value::Message(gauge));
@@ -712,11 +1357,39 @@ pub(crate) fn reduce_battle_attack_with_effects(
                             .min(rules.constants.max_party_gauge),
                     ),
                 );
+                state.set_field_by_name(
+                    "bomb_gauge",
+                    Value::I32(
+                        i32_field(&state, "bomb_gauge")
+                            .unwrap_or_default()
+                            .saturating_add(rules.constants.bomb_gauge_recovery_amount)
+                            .min(rules.constants.max_bomb_gauge),
+                    ),
+                );
+            } else if action_mode == 7 {
+                let mut gauge = member_status(member, "burst_gauge")?;
+                let maximum = i32_field(&gauge, "max_gauge")
+                    .unwrap_or(rules.constants.burst_gauge_required_for_one_burst_skill);
+                let current = i32_field(&gauge, "current_gauge").unwrap_or_default();
+                gauge.set_field_by_name(
+                    "current_gauge",
+                    Value::I32(
+                        current
+                            .saturating_add(rules.constants.burst_gauge_heal_active_skill)
+                            .min(maximum),
+                    ),
+                );
+                member.set_field_by_name("burst_gauge", Value::Message(gauge));
             }
             state.set_field_by_name(
                 "members",
                 Value::List(members.into_iter().map(Value::Message).collect()),
             );
+            if matches!(mode, 1 | 8) && action_index + 1 == action_count {
+                resolved
+                    .effect_results
+                    .extend(effect_runtime.trigger_party_tool_effects(proto, rules, &mut state)?);
+            }
             state.set_field_by_name("total_turn", Value::I32(turn_number));
             refresh_burst_enable(rules, &mut state)?;
             actions.push(build_action(
@@ -727,18 +1400,34 @@ pub(crate) fn reduce_battle_attack_with_effects(
                 actor_id,
                 skill,
                 target_id,
-                skill_results,
-                before_skill_effect_results,
-                effect_results,
-                timeline_moves,
-                action_type,
-                selected_tool_number,
-                total_damage,
+                resolved.skill_results,
+                resolved.before_effect_results,
+                resolved.effect_results,
+                resolved.timeline_moves,
+                action_mode,
+                command_value,
+                resolved.total_damage,
+                resolved.protection,
             )?);
+            let pending_actions = resolved.pending_actions;
             action_number = action_number
                 .checked_add(1)
                 .ok_or(StateError::InvalidRequest)?;
             generated_actions += 1;
+            append_nested_actions(
+                proto,
+                rules,
+                &mut state,
+                effect_runtime,
+                resources,
+                secret,
+                start_txid,
+                turn_number,
+                pending_actions,
+                &mut actions,
+                &mut action_number,
+                &mut generated_actions,
+            )?;
         }
         state.set_field_by_name("total_turn", Value::I32(total_turn));
 
@@ -758,7 +1447,14 @@ pub(crate) fn reduce_battle_attack_with_effects(
                 let next_wave_id = wave_ids[usize::try_from(next_wave_number - 1).unwrap_or(0)];
                 let wave_rule = rule_wave(rules, next_wave_id)?;
                 state.set_field_by_name("wave", Value::I32(next_wave_number));
-                append_wave_members(proto, rules, &mut state, wave_rule)?;
+                append_wave_members(
+                    proto,
+                    rules,
+                    &mut state,
+                    wave_rule,
+                    &effect_runtime.initiative_members(),
+                )?;
+                set_battle_field_effect(proto, &mut state, wave_rule.field_effect_id)?;
                 let battle_id = i32_field(&state, "battle_id").unwrap_or_default();
                 let panel_ids = tutorial_timeline_panels(rules, battle_id, next_wave_number)?;
                 set_timeline_panels(
@@ -768,7 +1464,7 @@ pub(crate) fn reduce_battle_attack_with_effects(
                     rules.constants.timeline_panel_count,
                     1,
                 )?;
-                effect_runtime.acquire_current_panel(&mut state)?;
+                effect_runtime.acquire_current_panel(proto, rules, &mut state)?;
                 refresh_burst_enable(rules, &mut state)?;
                 effect_runtime.refresh(proto, &mut state)?;
                 let mut wave_start = empty_message(proto, "blend.model.BattleWaveStart")?;
@@ -817,6 +1513,7 @@ pub(crate) fn reduce_battle_attack_with_effects(
             )?;
             let mut setup_timeline_moves = Vec::new();
             if killed {
+                effect_runtime.discard_extra_turns(actor_id);
                 let members = message_list(&state, "members");
                 let mut units = message_list(&state, "timeline_units");
                 setup_timeline_moves.extend(remove_timeline_members(
@@ -830,6 +1527,7 @@ pub(crate) fn reduce_battle_attack_with_effects(
                     Value::List(units.into_iter().map(Value::Message).collect()),
                 );
             } else if disabled {
+                effect_runtime.take_current_extra_skill(&state)?;
                 let members = message_list(&state, "members");
                 let actor = members
                     .iter()
@@ -855,9 +1553,10 @@ pub(crate) fn reduce_battle_attack_with_effects(
                 );
             }
             if disabled || killed {
+                effect_runtime.consume_panel_potency(&state, actor_id)?;
                 consume_timeline_panel(proto, rules, &mut state)?;
                 effect_runtime.expire(actor_id, &[], true, false);
-                effect_runtime.acquire_current_panel(&mut state)?;
+                effect_runtime.acquire_current_panel(proto, rules, &mut state)?;
             }
             effect_runtime.refresh(proto, &mut state)?;
             refresh_burst_enable(rules, &mut state)?;
@@ -894,6 +1593,9 @@ pub(crate) fn reduce_battle_attack_with_effects(
             if disabled || killed {
                 setup.set_field_by_name("skill_selections", Value::List(Vec::new()));
                 setup.set_field_by_name("battle_tool_selections", Value::List(Vec::new()));
+                setup.set_field_by_name("battle_tool_mix_selections", Value::List(Vec::new()));
+                setup.set_field_by_name("ship_tool_selections", Value::List(Vec::new()));
+                setup.set_field_by_name("active_skill_selections", Value::List(Vec::new()));
             }
             setups.push(setup);
             if disabled || killed {
@@ -916,61 +1618,64 @@ pub(crate) fn reduce_battle_attack_with_effects(
                 .ok_or(StateError::InvalidRequest)?;
             let enemy_rule = rule_enemy(rules, enemy_member_status_enemy_id(&enemy_member)?)?;
             let panel_id = current_panel_id(&state);
-            let enemy_skill_id = if is_burst_panel_id(panel_id) {
-                enemy_rule.burst_skill_id
-            } else {
-                let choices: Vec<i32> = rules
-                    .enemy_ai_units
-                    .iter()
-                    .filter(|unit| unit.enemy_ai_id == enemy_rule.enemy_ai_id)
-                    .flat_map(|unit| unit.skill_ids.iter().copied())
-                    .collect();
-                if choices.is_empty() {
-                    return Err(StateError::TutorialRules(format!(
-                        "enemy AI {} has no skill",
-                        enemy_rule.enemy_ai_id
-                    )));
-                }
-                let roll = deterministic_roll(
-                    secret,
-                    start_txid,
-                    action_number,
-                    b"enemy-skill",
-                    actor_id,
-                    0,
-                );
-                choices[(roll as usize) % choices.len()]
-            };
+            let enemy_skill_id =
+                if let Some(skill_id) = effect_runtime.current_extra_skill(&state)? {
+                    effect_runtime
+                        .take_current_extra_skill(&state)?
+                        .ok_or(StateError::InvalidRequest)?;
+                    skill_id
+                } else if is_burst_panel_id(panel_id) {
+                    enemy_rule.burst_skill_id
+                } else {
+                    let choices: Vec<i32> = rules
+                        .enemy_ai_units
+                        .iter()
+                        .filter(|unit| unit.enemy_ai_id == enemy_rule.enemy_ai_id)
+                        .flat_map(|unit| unit.skill_ids.iter().copied())
+                        .collect();
+                    if choices.is_empty() {
+                        return Err(StateError::TutorialRules(format!(
+                            "enemy AI {} has no skill",
+                            enemy_rule.enemy_ai_id
+                        )));
+                    }
+                    let roll = deterministic_roll(
+                        secret,
+                        start_txid,
+                        action_number,
+                        b"enemy-skill",
+                        actor_id,
+                        0,
+                    );
+                    choices[(roll as usize) % choices.len()]
+                };
             let enemy_skill = rule_skill(rules, enemy_skill_id)?;
             let target_id = if enemy_skill.skill_target_type == Some(1) {
                 actor_id
             } else if matches!(enemy_skill.skill_target_type, Some(2 | 4)) {
                 member_id(&most_injured_living_member(&state, 1)?)?
             } else if enemy_skill.skill_target_type == Some(3) {
-                effect_runtime
-                    .provocation_target(actor_id)
-                    .unwrap_or(member_id(&earliest_living_member(&state, Some(0))?)?)
+                if let Some(target) = effect_runtime.provocation_target(actor_id) {
+                    target
+                } else {
+                    effect_runtime.target_by_rate(
+                        &state,
+                        deterministic_roll(
+                            secret,
+                            start_txid,
+                            action_number,
+                            b"enemy-target",
+                            actor_id,
+                            0,
+                        ),
+                    )?
+                }
             } else {
                 member_id(&earliest_living_member(&state, Some(0))?)?
             };
-            let enemy_targets = select_target_ids(&state, 1, target_id, enemy_skill)?;
-            let panel = battle_panel_multiplier(&state);
-            let before_skill_effect_results = effect_runtime.apply_for_action(
-                proto,
-                &mut state,
-                actor_id,
-                enemy_skill.id,
-                &enemy_skill.effects,
-                &enemy_targets,
-                true,
-                "before",
-                Some(&before_actor),
-                enemy_skill.state_change_application_rate,
-                secret,
-                start_txid,
-                action_number,
-            )?;
-            let (results, timeline_moves, damage_total) = apply_attack_results(
+            let enemy_targets = select_target_ids(&state, actor_id, 1, target_id, enemy_skill)?;
+            let panel = effect_runtime.panel_multiplier(&state)?;
+            let resolved = resolve_skill_action(
                 proto,
                 rules,
                 &mut state,
@@ -983,42 +1688,15 @@ pub(crate) fn reduce_battle_attack_with_effects(
                 &enemy_targets,
                 panel,
                 None,
-                secret,
-                start_txid,
-                action_number,
-            )?;
-            effect_runtime.expire(actor_id, &results, true, enemy_skill.skill_effect_type == 1);
-            let effect_targets = results
-                .iter()
-                .filter(|result| {
-                    !bool_field(result, "is_miss") && !bool_field(result, "is_invalid")
-                })
-                .filter_map(|result| i32_field(result, "target_id"))
-                .collect::<Vec<_>>();
-            let mut effect_results = effect_runtime.apply_for_action(
-                proto,
-                &mut state,
-                actor_id,
-                enemy_skill.id,
-                &enemy_skill.effects,
-                &effect_targets,
                 true,
-                "after",
-                Some(&before_actor),
-                enemy_skill.state_change_application_rate,
+                true,
+                true,
                 secret,
                 start_txid,
                 action_number,
             )?;
-            effect_results.extend(effect_runtime.trigger_attack_after(
-                proto,
-                &mut state,
-                actor_id,
-                enemy_skill,
-                &results,
-            )?);
             consume_timeline_panel(proto, rules, &mut state)?;
-            effect_runtime.acquire_current_panel(&mut state)?;
+            effect_runtime.acquire_current_panel(proto, rules, &mut state)?;
             state.set_field_by_name("total_turn", Value::I32(total_turn));
             refresh_burst_enable(rules, &mut state)?;
             actions.push(build_action(
@@ -1029,14 +1707,16 @@ pub(crate) fn reduce_battle_attack_with_effects(
                 actor_id,
                 enemy_skill,
                 target_id,
-                results,
-                before_skill_effect_results,
-                effect_results,
-                timeline_moves,
+                resolved.skill_results,
+                resolved.before_effect_results,
+                resolved.effect_results,
+                resolved.timeline_moves,
                 0,
                 None,
-                damage_total,
+                resolved.total_damage,
+                resolved.protection,
             )?);
+            let pending_actions = resolved.pending_actions;
             action_number = action_number
                 .checked_add(1)
                 .ok_or(StateError::InvalidRequest)?;
@@ -1044,6 +1724,20 @@ pub(crate) fn reduce_battle_attack_with_effects(
                 .checked_add(1)
                 .ok_or(StateError::InvalidRequest)?;
             generated_actions += 1;
+            append_nested_actions(
+                proto,
+                rules,
+                &mut state,
+                effect_runtime,
+                resources,
+                secret,
+                start_txid,
+                total_turn,
+                pending_actions,
+                &mut actions,
+                &mut action_number,
+                &mut generated_actions,
+            )?;
         }
     }
     effect_runtime.next_action_number = action_number;
@@ -1131,6 +1825,8 @@ mod tests {
             &proto,
             &mut units,
             &members,
+            14,
+            0,
             &[TutorialSkillEffect {
                 id: 780097002,
                 value: 100,
@@ -1151,6 +1847,59 @@ mod tests {
                 ))
                 .collect::<Vec<_>>(),
             vec![(2, 183, 3, 4, 5), (1, 395, 3, 10, 11)]
+        );
+
+        let mut unchanged = original.clone();
+        assert!(apply_timeline_effects(
+            &proto,
+            &mut unchanged,
+            &members,
+            14,
+            12001729,
+            &[TutorialSkillEffect {
+                id: 91000942,
+                value: 3000
+            }],
+            &[5],
+        )
+        .unwrap()
+        .is_empty());
+        assert_eq!(unchanged, original);
+
+        let mut advanced = original.clone();
+        let pull = apply_timeline_effects(
+            &proto,
+            &mut advanced,
+            &members,
+            5,
+            22001768,
+            &[TutorialSkillEffect {
+                id: 71255008,
+                value: 100,
+            }],
+            &[1],
+        )
+        .unwrap();
+        assert!(!pull.is_empty());
+        assert!(pull
+            .iter()
+            .all(|movement| member_id(movement).ok() == Some(5)));
+        assert_eq!(optional_i32_field(&pull[0], "wait"), Some(92));
+        for (effect_id, skill_id) in [(780120010, 20009019), (780118004, 20009047)] {
+            let rule = effects::rule_for(effect_id, "active", "skill", skill_id)
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                (rule.operation.as_str(), rule.target.as_str(), rule.sign),
+                ("timeline_shift", "targets", -1)
+            );
+        }
+        let push = effects::rule_for(780044001, "active", "skill", 20009435)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (push.operation.as_str(), push.target.as_str(), push.sign),
+            ("timeline_shift", "targets", 1)
         );
 
         let mut break_units = original;

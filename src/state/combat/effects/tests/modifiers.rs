@@ -1,3 +1,4 @@
+use super::super::runtime::Instance;
 use super::super::*;
 use crate::state::combat::prelude::*;
 use std::path::Path;
@@ -51,6 +52,10 @@ fn weak_skill_modifier_applies_only_to_lowest_resistance() {
                 value: 5_000,
             },
         ],
+        limit_count: None,
+        max_lamp: 0,
+        require_command_value: false,
+        skill_destination: None,
         state_change_application_rate: 10_000,
         hp_damage_bonus: None,
     };
@@ -95,6 +100,66 @@ fn weak_skill_modifier_applies_only_to_lowest_resistance() {
         instant_summary(&skill, &abnormal_target, false, 1).unwrap(),
         0
     );
+    let abnormal_skill = TutorialSkill {
+        id: 20002360,
+        effects: vec![TutorialSkillEffect {
+            id: 780014001,
+            value: 1_500,
+        }],
+        ..skill
+    };
+    assert_eq!(
+        instant_summary(&abnormal_skill, &abnormal_target, false, 1).unwrap(),
+        1_500
+    );
+    assert_eq!(
+        instant_summary(&abnormal_skill, &negative_target, false, 1).unwrap(),
+        0
+    );
+    let abnormal_break_skill = TutorialSkill {
+        id: 12003897,
+        effects: vec![TutorialSkillEffect {
+            id: 91002337,
+            value: 4_000,
+        }],
+        ..abnormal_skill
+    };
+    assert_eq!(
+        instant_summary(&abnormal_break_skill, &abnormal_target, false, 3).unwrap(),
+        4_000
+    );
+    assert_eq!(
+        instant_summary(&abnormal_break_skill, &negative_target, false, 3).unwrap(),
+        0
+    );
+}
+
+#[test]
+fn granted_weak_damage_buffs_keep_their_future_attack_scope() {
+    for (effect_id, skill_id, target, expiry, duration, stack_cap) in [
+        (91001593, 12003210, "self", Expiry::Turn, 2, 0),
+        (91001597, 14002336, "self", Expiry::Turn, 1, 0),
+        (91001988, 12003343, "allies", Expiry::Turn, 2, 0),
+        (91001992, 14003363, "self", Expiry::Permanent, -1, 15_000),
+        (91002234, 12003686, "self", Expiry::Turn, 3, 0),
+    ] {
+        let rule = rule_for(effect_id, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                rule.operation.as_str(),
+                rule.summary,
+                rule.target.as_str(),
+                rule.phase.as_str(),
+                &rule.expiry,
+                rule.duration,
+                rule.weak_only,
+                rule.stack_cap,
+            ),
+            ("summary", 1, target, "after", &expiry, duration, true, stack_cap)
+        );
+    }
 }
 
 #[test]
@@ -232,24 +297,26 @@ fn skill_two_vulnerability_affects_only_skill_two_damage() {
         .clone();
     skill_two.effects.clear();
     let one_without =
-        secondary_damage(1_000_000, &source, &target, &skill_one, None, false).unwrap();
+        secondary_damage(1_000_000, &source, &target, &skill_one, None, 0, false).unwrap();
     let one_with = secondary_damage(
         1_000_000,
         &source,
         &target,
         &skill_one,
         Some(&runtime),
+        0,
         false,
     )
     .unwrap();
     let two_without =
-        secondary_damage(1_000_000, &source, &target, &skill_two, None, false).unwrap();
+        secondary_damage(1_000_000, &source, &target, &skill_two, None, 0, false).unwrap();
     let two_with = secondary_damage(
         1_000_000,
         &source,
         &target,
         &skill_two,
         Some(&runtime),
+        0,
         false,
     )
     .unwrap();
@@ -340,6 +407,176 @@ fn attribute_resistance_down_affects_only_matching_damage() {
 
 #[test]
 fn common_active_modifiers_change_only_their_declared_buckets() {
+    assert!(rule_for(91001380, "active", "skill", 11001769)
+        .unwrap()
+        .is_none());
+    for (effect_id, minimum) in [(91001043, 50), (91001044, 100)] {
+        let rule = rule_for(effect_id, "instant", "skill", 12000516)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                rule.operation.as_str(),
+                rule.summary,
+                rule.condition.get("hp_min")
+            ),
+            ("summary", 1, Some(&minimum))
+        );
+    }
+    for skill_id in [12001414, 12003316] {
+        let rule = rule_for(91001314, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                rule.operation.as_str(),
+                rule.target.as_str(),
+                &rule.expiry,
+                rule.duration,
+            ),
+            ("magic", "targets", &Expiry::Turn, 2)
+        );
+    }
+    let broken_critical = rule_for(91001974, "active", "skill", 12003301)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            broken_critical.operation.as_str(),
+            broken_critical.summary,
+            broken_critical.target.as_str(),
+            &broken_critical.expiry,
+            broken_critical.duration,
+            broken_critical.target_broken,
+        ),
+        ("summary", 17, "targets", &Expiry::Attacked, 2, true)
+    );
+    for (effect_id, skill_id, duration) in [(780046019, 20007532, 3), (780042011, 22002049, 10)] {
+        let rule = rule_for(effect_id, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                rule.operation.as_str(),
+                rule.summary,
+                &rule.expiry,
+                rule.duration
+            ),
+            ("summary", 11, &Expiry::Attacked, duration)
+        );
+    }
+    let speed_down = rule_for(780016004, "active", "skill", 32005161)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            speed_down.operation.as_str(),
+            speed_down.target.as_str(),
+            speed_down.sign,
+            &speed_down.expiry,
+            speed_down.duration,
+        ),
+        ("speed", "targets", -1, &Expiry::Turn, 3)
+    );
+    let received_healing = rule_for(780132010, "active", "skill", 32003897)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            received_healing.operation.as_str(),
+            received_healing.target.as_str(),
+            received_healing.sign,
+            &received_healing.expiry,
+            received_healing.duration,
+        ),
+        ("healing_received", "enemies", -1, &Expiry::Turn, 2)
+    );
+    let critical_rate_down = rule_for(780048006, "active", "skill", 20008326)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            critical_rate_down.operation.as_str(),
+            critical_rate_down.summary,
+            critical_rate_down.target.as_str(),
+            critical_rate_down.sign,
+            &critical_rate_down.expiry,
+            critical_rate_down.duration,
+        ),
+        ("summary", 6, "targets", -1, &Expiry::Turn, 3)
+    );
+    for (skill_id, target) in [(26001994, "targets"), (32000997, "allies")] {
+        let critical_rate_up = rule_for(76201007, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                critical_rate_up.operation.as_str(),
+                critical_rate_up.summary,
+                critical_rate_up.target.as_str(),
+                critical_rate_up.sign,
+                &critical_rate_up.expiry,
+                critical_rate_up.duration,
+            ),
+            ("summary", 6, target, 1, &Expiry::Turn, 2)
+        );
+    }
+    for (skill_id, target) in [(32002564, "allies"), (32004927, "self"), (32005031, "self")] {
+        let critical_rate_up = rule_for(71153004, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                critical_rate_up.target.as_str(),
+                critical_rate_up.summary,
+                critical_rate_up.sign,
+                &critical_rate_up.expiry,
+                critical_rate_up.duration,
+            ),
+            (target, 6, 1, &Expiry::Turn, 1)
+        );
+    }
+    for (effect_id, skill_id) in [(71212004, 22001466), (780048001, 20001686)] {
+        assert!(rule_for(effect_id, "active", "skill", skill_id)
+            .unwrap()
+            .is_none());
+    }
+    let ally_damage_down = rule_for(780087005, "active", "skill", 20002500)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            ally_damage_down.operation.as_str(),
+            ally_damage_down.target.as_str(),
+            ally_damage_down.sign,
+            &ally_damage_down.expiry,
+            ally_damage_down.duration,
+        ),
+        ("taken_down", "targets", 1, &Expiry::Attacked, 2)
+    );
+    let conditional_immunity = rule_for(780103015, "active", "skill", 32003858)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            conditional_immunity.operation.as_str(),
+            conditional_immunity.target.as_str(),
+            conditional_immunity.fixed,
+            &conditional_immunity.expiry,
+            conditional_immunity.duration,
+            conditional_immunity
+                .condition
+                .get("source_abnormal_count_max"),
+        ),
+        (
+            "healing_received",
+            "enemies",
+            Some(10_000),
+            &Expiry::Turn,
+            3,
+            Some(&0),
+        )
+    );
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../schemas/atelier-resleriana-2.16.0.protoset"
@@ -362,6 +599,50 @@ fn common_active_modifiers_change_only_their_declared_buckets() {
         member.set_field_by_name("state_change_summaries", Value::List(Vec::new()));
         member
     };
+    let mut source = member(1, 0);
+    let role_rule = rule_for(780045014, "active", "skill", 20007180)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            role_rule.operation.as_str(),
+            role_rule.summary,
+            role_rule.target.as_str(),
+            role_rule.sign,
+            &role_rule.expiry,
+            role_rule.duration,
+        ),
+        ("summary", 6, "targets", -1, &Expiry::Turn, 1)
+    );
+    let role_target = |member_id, character_id| {
+        let mut target = member(member_id, 0);
+        let mut ally = empty_message(&proto, "blend.model.BattleAlly").unwrap();
+        ally.set_field_by_name("character_id", Value::I32(character_id));
+        target.set_field_by_name("ally", Value::Message(ally));
+        target
+    };
+    let supporter = role_target(3, role_rule.target_character_ids[0]);
+    let attacker_id = rule_for(780045001, "active", "skill", 20007180)
+        .unwrap()
+        .unwrap()
+        .target_character_ids[0];
+    let attacker = role_target(4, attacker_id);
+    assert!(selected(role_rule, &source, &supporter, &[3]));
+    assert!(!selected(role_rule, &source, &attacker, &[4]));
+    assert!(super::super::runtime_match::condition(
+        conditional_immunity,
+        &source,
+    ));
+    source.set_field_by_name(
+        "state_changes",
+        Value::List(vec![Value::Message(
+            display(&proto, 940006, 100, 1).unwrap(),
+        )]),
+    );
+    assert!(!super::super::runtime_match::condition(
+        conditional_immunity,
+        &source,
+    ));
     let mut state = empty_message(&proto, "blend.model.BattleState").unwrap();
     state.set_field_by_name(
         "members",
@@ -394,7 +675,6 @@ fn common_active_modifiers_change_only_their_declared_buckets() {
                     id: 780107003,
                     value: 1_200,
                 },
-
                 TutorialSkillEffect {
                     id: 780123003,
                     value: 3_000,
@@ -427,6 +707,26 @@ fn common_active_modifiers_change_only_their_declared_buckets() {
     assert_eq!(state_change_summary_value(&target, 2), 1_200);
     assert_eq!(state_change_summary_value(&target, 17), 2_500);
     assert_eq!(healing_amount(100, &target, &target).unwrap(), 70);
+    runtime
+        .apply(
+            &proto,
+            &mut state,
+            1,
+            &[TutorialSkillEffect {
+                id: 780052002,
+                value: 10_000,
+            }],
+            &[2],
+            true,
+            "after",
+            None,
+        )
+        .unwrap();
+    let recovery_locked = message_list(&state, "members")
+        .into_iter()
+        .find(|member| i32_field(member, "member_id") == Some(2))
+        .unwrap();
+    assert_eq!(healing_amount(100, &target, &recovery_locked).unwrap(), 0);
     assert_eq!(
         runtime
             .instances
@@ -434,6 +734,225 @@ fn common_active_modifiers_change_only_their_declared_buckets() {
             .find(|instance| instance.rule.id == 91001311)
             .map(|instance| instance.remaining),
         Some(2)
+    );
+}
+
+#[test]
+fn target_status_damage_applies_only_to_the_named_status() {
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let mut target = empty_message(&proto, "blend.model.BattleMember").unwrap();
+    target.set_field_by_name("state_changes", Value::List(Vec::new()));
+    let skill = TutorialSkill {
+        id: 22000158,
+        skill_type: 1,
+        skill_effect_type: 1,
+        skill_power_type: 2,
+        wait: 0,
+        power: 100,
+        break_power: 0,
+        break_power_type: 1,
+        attack_attributes: vec![5],
+        skill_target_type: Some(3),
+        effects: vec![TutorialSkillEffect {
+            id: 71142003,
+            value: 3_000,
+        }],
+        limit_count: None,
+        max_lamp: 0,
+        require_command_value: false,
+        skill_destination: None,
+        state_change_application_rate: 10_000,
+        hp_damage_bonus: None,
+    };
+    assert_eq!(instant_summary(&skill, &target, false, 1).unwrap(), 0);
+    target.set_field_by_name(
+        "state_changes",
+        Value::List(vec![Value::Message(
+            display(&proto, 940006, 100, 1).unwrap(),
+        )]),
+    );
+    assert_eq!(instant_summary(&skill, &target, false, 1).unwrap(), 3_000);
+    let rule = rule_for(71142003, "instant", "skill", skill.id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(rule.condition.get("target_state_id"), Some(&940006));
+}
+
+#[test]
+fn effect_potency_scales_matching_sources_and_targets() {
+    let negative_down = rule_for(71187001, "active", "skill", 22001609)
+        .unwrap()
+        .unwrap()
+        .clone();
+    assert_eq!(
+        (
+            negative_down.operation.as_str(),
+            negative_down.target.as_str(),
+            negative_down.sign,
+            negative_down.state_id,
+            negative_down.duration,
+        ),
+        ("negative_potency", "self", -1, 910099, 2)
+    );
+    let positive_down = rule_for(71146004, "active", "skill", 22000989)
+        .unwrap()
+        .unwrap()
+        .clone();
+    assert_eq!(
+        (
+            positive_down.operation.as_str(),
+            positive_down.target.as_str(),
+            positive_down.sign,
+            positive_down.state_id,
+            positive_down.duration,
+        ),
+        ("positive_potency", "enemies", -1, 720016, 3)
+    );
+    let given_positive = rule_for(95000334, "passive", "ability", 4991208)
+        .unwrap()
+        .unwrap()
+        .clone();
+    let given_negative = rule_for(95000335, "passive", "ability", 4991208)
+        .unwrap()
+        .unwrap()
+        .clone();
+    assert_eq!(
+        (
+            given_positive.operation.as_str(),
+            given_negative.operation.as_str(),
+        ),
+        ("given_positive_potency", "given_negative_potency")
+    );
+
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let member = |id, character_id| {
+        let mut ally = empty_message(&proto, "blend.model.BattleAlly").unwrap();
+        ally.set_field_by_name("character_id", Value::I32(character_id));
+        let mut member = empty_message(&proto, "blend.model.BattleMember").unwrap();
+        member.set_field_by_name("member_id", Value::I32(id));
+        member.set_field_by_name("type", Value::EnumNumber(0));
+        member.set_field_by_name("is_alive", Value::Bool(true));
+        member.set_field_by_name("ally", Value::Message(ally));
+        member
+    };
+    let members = vec![
+        member(1, 0),
+        member(2, 0),
+        member(3, given_positive.source_character_ids[0]),
+    ];
+
+    let mut runtime = Runtime::default();
+    runtime.instances.push(Instance {
+        source: 1,
+        source_character_id: 0,
+        target: 1,
+        value: -5_000,
+        remaining: 2,
+        rule: negative_down,
+    });
+    let negative_effect = rule_for(780107003, "active", "skill", 0).unwrap().unwrap();
+    for expected in [1_000, 1_000, 2_000] {
+        assert_eq!(
+            runtime
+                .apply_potency(&members, &members[1], 1, negative_effect, 2_000)
+                .unwrap(),
+            expected
+        );
+    }
+    runtime.instances.push(Instance {
+        source: 1,
+        source_character_id: 0,
+        target: 2,
+        value: -3_000,
+        remaining: 3,
+        rule: positive_down,
+    });
+    let positive_effect = rule_for(91001018, "active", "skill", 0).unwrap().unwrap();
+    assert_eq!(
+        runtime
+            .apply_potency(&members, &members[0], 2, positive_effect, 1_000)
+            .unwrap(),
+        700
+    );
+    assert_eq!(runtime.instances[0].remaining, 2);
+
+    let positive_up = rule_for(120000195, "passive", "ability", 600000216)
+        .unwrap()
+        .unwrap()
+        .clone();
+    let mut passive_runtime = Runtime::default();
+    passive_runtime.passives.push(Passive {
+        source: 2,
+        value: 1_500,
+        rule: positive_up,
+        source_character_id: 0,
+        source_type: 0,
+    });
+    assert_eq!(
+        passive_runtime
+            .apply_potency(&members, &members[0], 2, positive_effect, 1_000)
+            .unwrap(),
+        1_150
+    );
+
+    let mut giver_runtime = Runtime::default();
+    for (rule, value) in [(given_positive, 400), (given_negative, 500)] {
+        giver_runtime.passives.push(Passive {
+            source: 3,
+            value,
+            rule,
+            source_character_id: message_i32_field(&members[2], "ally", "character_id").unwrap(),
+            source_type: 0,
+        });
+    }
+    assert_eq!(
+        giver_runtime
+            .apply_potency(&members, &members[2], 2, positive_effect, 1_000)
+            .unwrap(),
+        1_040
+    );
+    assert_eq!(
+        giver_runtime
+            .apply_potency(&members, &members[2], 2, negative_effect, 1_000)
+            .unwrap(),
+        1_050
+    );
+    assert_eq!(
+        giver_runtime
+            .apply_potency(&members, &members[0], 2, positive_effect, 1_000)
+            .unwrap(),
+        1_000
+    );
+
+    let ally_given = rule_for(81256002, "passive", "ability", 21256001)
+        .unwrap()
+        .unwrap()
+        .clone();
+    assert_eq!(
+        (ally_given.operation.as_str(), ally_given.target.as_str()),
+        ("given_positive_potency", "allies")
+    );
+    let mut ally_runtime = Runtime::default();
+    ally_runtime.passives.push(Passive {
+        source: 1,
+        value: 1_000,
+        rule: ally_given,
+        source_character_id: 0,
+        source_type: 0,
+    });
+    assert_eq!(
+        ally_runtime
+            .apply_potency(&members, &members[1], 3, positive_effect, 1_000)
+            .unwrap(),
+        1_100
     );
 }
 
@@ -495,6 +1014,10 @@ fn enemy_defense_down_reaches_hidden_damage_defense() {
         attack_attributes: vec![1],
         skill_target_type: Some(3),
         effects: Vec::new(),
+        limit_count: None,
+        max_lamp: 0,
+        require_command_value: false,
+        skill_destination: None,
         state_change_application_rate: 10_000,
         hp_damage_bonus: None,
     };

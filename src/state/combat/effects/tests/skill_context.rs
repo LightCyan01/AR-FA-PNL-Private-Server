@@ -72,10 +72,12 @@ fn observed_master_damage_passives_apply_once() {
     )
     .unwrap();
     apply_leader_passives(&rules, &mut party).unwrap();
-    assert!(party.iter().all(|member| member
-        .leader_passives
+    assert!(party
         .iter()
-        .any(|effect| effect.id == 72500125 && effect.value == 5000)));
+        .all(|member| member
+            .leader_passives
+            .iter()
+            .any(|passive| passive.effect.id == 72500125 && passive.effect.value == 5000)));
 
     let member = |character_id, is_leader| BattlePartyMember {
         character_id,
@@ -87,6 +89,7 @@ fn observed_master_damage_passives_apply_once() {
         integrated_stats: None,
         damage_bonus: 0,
         skills: Vec::new(),
+        ability_ids: Vec::new(),
         passives: Vec::new(),
         leader_passives: Vec::new(),
     };
@@ -97,7 +100,7 @@ fn observed_master_damage_passives_apply_once() {
         .all(|member| [72500160, 72500161].into_iter().all(|id| member
             .leader_passives
             .iter()
-            .any(|effect| effect.id == id && effect.value == 2000))));
+            .any(|passive| passive.effect.id == id && passive.effect.value == 2000))));
 
     let start = reduce_battle_start(&proto, &rules, resources, 101001002, 1).unwrap();
     assert!(message_list(&start.state, "members")
@@ -119,6 +122,7 @@ fn observed_master_damage_passives_apply_once() {
         (72000907, "allies", "attack", 0),
         (72000908, "allies", "magic", 0),
         (72000909, "allies", "defense", 0),
+        (72000914, "self", "target_rate", 0),
         (72000946, "allies", "summary", 7),
     ] {
         let rule = registry()
@@ -172,6 +176,46 @@ fn observed_master_damage_passives_apply_once() {
             && i32_field(change, "rest_count") == Some(2)
     }));
     assert_eq!(incoming_multiplier_with_runtime(&leader, 1, None), 7000);
+
+    let mut targeting_state = start.state.clone();
+    let first_member = message_list(&targeting_state, "members")
+        .into_iter()
+        .find(|member| member_type(member).ok() == Some(0))
+        .unwrap();
+    let first = member_id(&first_member).unwrap();
+    let boosted = first + 1;
+    let mut boosted_member = first_member.clone();
+    boosted_member.set_field_by_name("member_id", Value::I32(boosted));
+    targeting_state.set_field_by_name(
+        "members",
+        Value::List(vec![
+            Value::Message(first_member),
+            Value::Message(boosted_member),
+        ]),
+    );
+    let mut targeting = Runtime::default();
+    targeting.passives.push(Passive {
+        source: boosted,
+        value: 10_000,
+        rule: rule_for(72000914, "passive", "ability", 1990550)
+            .unwrap()
+            .unwrap()
+            .clone(),
+        source_character_id: 0,
+        source_type: 0,
+    });
+    assert_eq!(
+        targeting.target_by_rate(&targeting_state, 9_999).unwrap(),
+        first
+    );
+    assert_eq!(
+        targeting.target_by_rate(&targeting_state, 10_000).unwrap(),
+        boosted
+    );
+    assert_eq!(
+        targeting.target_by_rate(&targeting_state, 29_999).unwrap(),
+        boosted
+    );
 }
 
 #[test]
@@ -301,6 +345,177 @@ fn conditional_memoria_and_equipment_follow_attack_context() {
         450
     );
     assert_eq!(contextual.contextual_summary(&actor(), &burst, false, 7), 0);
+    add_passive(&mut contextual, 120000114, 3_000, 0);
+    let mut enemy = message_list(&clean_state, "members")
+        .into_iter()
+        .find(|member| i32_field(member, "member_id") == Some(enemy_id))
+        .unwrap();
+    assert_eq!(
+        contextual.contextual_summary_against(&actor(), Some(&enemy), &physical, false, 4),
+        0
+    );
+    let mut enemy_status = member_status(&enemy, "enemy").unwrap();
+    enemy_status.set_field_by_name("is_broken", Value::Bool(true));
+    enemy.set_field_by_name("enemy", Value::Message(enemy_status));
+    assert_eq!(
+        contextual.contextual_summary_against(&actor(), Some(&enemy), &physical, false, 4),
+        3_000
+    );
+    add_passive(&mut contextual, 120000276, 500, 0);
+    assert_eq!(
+        contextual.contextual_summary_against(&actor(), Some(&enemy), &physical, false, 3),
+        0
+    );
+    let mut poison = empty_message(&proto, "blend.model.BattleStateChange").unwrap();
+    poison.set_field_by_name("state_change_id", Value::I32(940007));
+    enemy.set_field_by_name("state_changes", Value::List(vec![Value::Message(poison)]));
+    assert_eq!(
+        contextual.contextual_summary_against(&actor(), Some(&enemy), &physical, false, 3),
+        500
+    );
+
+    let power = rule_for(120000138, "passive", "ability", 600000092)
+        .unwrap()
+        .unwrap();
+    let damage = rule_for(120000138, "passive", "ability", 600000249)
+        .unwrap()
+        .unwrap();
+    assert_eq!((power.summary, power.weak_only), (4, true));
+    assert_eq!((damage.summary, damage.weak_only), (1, true));
+    let mut weak_runtime = base_runtime();
+    add_passive(&mut weak_runtime, 120000138, 3_000, 0);
+    let mut resistance = member_status(&enemy, "resistance").unwrap();
+    for field in [
+        "slashing",
+        "impact",
+        "piercing",
+        "fire",
+        "ice",
+        "lightning",
+        "wind",
+    ] {
+        resistance.set_field_by_name(field, Value::I32(0));
+    }
+    enemy.set_field_by_name("resistance", Value::Message(resistance.clone()));
+    assert_eq!(
+        weak_runtime.contextual_summary_against(&actor(), Some(&enemy), &physical, false, 4),
+        0
+    );
+    resistance.set_field_by_name(
+        resistance_name(preferred_attack_attribute(&enemy, &physical).unwrap()).unwrap(),
+        Value::I32(-20),
+    );
+    enemy.set_field_by_name("resistance", Value::Message(resistance));
+    assert_eq!(
+        weak_runtime.contextual_summary_against(&actor(), Some(&enemy), &physical, false, 4),
+        3_000
+    );
+
+    let target_negative_skill = rules
+        .skills
+        .iter()
+        .find(|skill| skill.id == 22001049)
+        .unwrap();
+    assert_eq!(
+        instant_summary(target_negative_skill, &enemy, false, 1).unwrap(),
+        0
+    );
+    let mut negative = empty_message(&proto, "blend.model.BattleStateChange").unwrap();
+    negative.set_field_by_name(
+        "state_change_id",
+        Value::I32(registry().unwrap().negative_state_ids[0]),
+    );
+    let mut negative_enemy = enemy.clone();
+    let mut target_states = message_list(&negative_enemy, "state_changes")
+        .into_iter()
+        .map(Value::Message)
+        .collect::<Vec<_>>();
+    target_states.push(Value::Message(negative));
+    negative_enemy.set_field_by_name("state_changes", Value::List(target_states));
+    assert_eq!(
+        instant_summary(target_negative_skill, &negative_enemy, false, 1).unwrap(),
+        3_000
+    );
+
+    let negative_rule = rule_for(780132012, "active", "skill", 20009597)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            negative_rule.target.as_str(),
+            &negative_rule.expiry,
+            negative_rule.duration,
+            negative_rule.condition.get("opponent_negative"),
+        ),
+        ("allies", &Expiry::Turn, 2, Some(&1))
+    );
+    assert!(super::super::runtime_match::condition(
+        negative_rule,
+        &actor()
+    ));
+    let mut negative_runtime = base_runtime();
+    negative_runtime
+        .instances
+        .push(super::super::runtime::Instance {
+            source: actor_id,
+            source_character_id: 0,
+            target: actor_id,
+            value: 5_000,
+            remaining: 2,
+            rule: negative_rule.clone(),
+        });
+    assert_eq!(
+        negative_runtime.contextual_summary_against(&actor(), Some(&enemy), &physical, false, 1,),
+        0
+    );
+    assert_eq!(
+        negative_runtime.contextual_summary_against(
+            &actor(),
+            Some(&negative_enemy),
+            &physical,
+            false,
+            1,
+        ),
+        5_000
+    );
+    let damage = |runtime| {
+        policy_damage(
+            &proto,
+            &rules,
+            &actor(),
+            &negative_enemy,
+            &physical,
+            None,
+            runtime,
+            1,
+            (100, 100),
+            false,
+            false,
+            10_000,
+        )
+        .unwrap()
+    };
+    assert!(damage(Some(&negative_runtime)) > damage(None));
+
+    let abnormal_rule = rule_for(780132012, "active", "skill", 32001336)
+        .unwrap()
+        .unwrap();
+    assert_eq!(abnormal_rule.condition.get("opponent_abnormal"), Some(&1));
+    let mut abnormal_runtime = base_runtime();
+    abnormal_runtime
+        .instances
+        .push(super::super::runtime::Instance {
+            source: actor_id,
+            source_character_id: 0,
+            target: actor_id,
+            value: 2_500,
+            remaining: 2,
+            rule: abnormal_rule.clone(),
+        });
+    assert_eq!(
+        abnormal_runtime.contextual_summary_against(&actor(), Some(&enemy), &physical, false, 1,),
+        2_500
+    );
 
     let mut static_state = clean_state.clone();
     let mut static_runtime = base_runtime();
@@ -339,8 +554,8 @@ fn conditional_memoria_and_equipment_follow_attack_context() {
         trigger_runtime
             .trigger_attack_after(
                 &proto,
+                &rules,
                 &mut trigger_state,
-
                 actor_id,
                 &physical,
                 &[hit.clone()],
@@ -420,6 +635,7 @@ fn conditional_memoria_and_equipment_follow_attack_context() {
         &wind_enemy,
         &wind,
         Some(&wind_runtime),
+        0,
         true,
     )
     .unwrap();
@@ -428,7 +644,14 @@ fn conditional_memoria_and_equipment_follow_attack_context() {
     )
     .unwrap();
     wind_runtime
-        .trigger_attack_after(&proto, &mut wind_state, actor_id, &wind, &[wind_hit])
+        .trigger_attack_after(
+            &proto,
+            &rules,
+            &mut wind_state,
+            actor_id,
+            &wind,
+            &[wind_hit],
+        )
         .unwrap();
     let wind_enemy = message_list(&wind_state, "members")
         .into_iter()
@@ -442,6 +665,7 @@ fn conditional_memoria_and_equipment_follow_attack_context() {
             &wind_enemy,
             &wind,
             Some(&wind_runtime),
+            0,
             true,
         )
         .unwrap()

@@ -6,10 +6,31 @@ pub(super) fn condition(rule: &Rule, source: &DynamicMessage) -> bool {
     let hp = i64::from(i32_field(source, "hp").unwrap_or(0));
     let maximum = i64::from(i32_field(source, "max_hp").unwrap_or(1).max(1));
     rule.condition.keys().all(|key| {
-        matches!(
-            key.as_str(),
-            "hp_min" | "hp_max" | "target_hp_min" | "target_hp_max" | "target_negative"
-        )
+        (key == "party_tag_id" && rule.scale_by == "party_tag_count")
+            || matches!(
+                key.as_str(),
+                "hp_min"
+                    | "hp_max"
+                    | "hp_below"
+                    | "source_abnormal_count_max"
+                    | "target_hp_min"
+                    | "target_hp_max"
+                    | "target_hp_below"
+                    | "target_negative"
+                    | "target_abnormal"
+                    | "target_positive"
+                    | "target_negative_count_min"
+                    | "target_negative_count_max"
+                    | "target_abnormal_count_min"
+                    | "target_abnormal_count_max"
+                    | "target_state_id"
+                    | "target_state_count_id"
+                    | "target_state_count_min"
+                    | "opponent_negative"
+                    | "opponent_abnormal"
+                    | "opponent_hp_max"
+                    | "skill_lamp_full"
+            )
     }) && rule
         .condition
         .get("hp_min")
@@ -18,11 +39,61 @@ pub(super) fn condition(rule: &Rule, source: &DynamicMessage) -> bool {
             .condition
             .get("hp_max")
             .is_none_or(|n| hp * 100 <= maximum * i64::from(*n))
+        && rule
+            .condition
+            .get("hp_below")
+            .is_none_or(|n| hp * 100 < maximum * i64::from(*n))
+        && rule
+            .condition
+            .get("source_abnormal_count_max")
+            .is_none_or(|maximum| {
+                registry().ok().is_some_and(|rules| {
+                    i32::try_from(
+                        message_list(source, "state_changes")
+                            .iter()
+                            .filter(|change| {
+                                rules.abnormal_state_ids.contains(
+                                    &i32_field(change, "state_change_id").unwrap_or_default(),
+                                )
+                            })
+                            .count(),
+                    )
+                    .unwrap_or(i32::MAX)
+                        <= *maximum
+                })
+            })
+        && (rule.source_state_ids.is_empty()
+            || message_list(source, "state_changes").iter().any(|change| {
+                rule.source_state_ids
+                    .contains(&i32_field(change, "state_change_id").unwrap_or_default())
+                    && optional_i32_field(change, "level").unwrap_or_default()
+                        >= rule.source_state_level_min
+            }))
 }
 
 pub(super) fn target_condition(rule: &Rule, target: &DynamicMessage) -> bool {
     let hp = i64::from(i32_field(target, "hp").unwrap_or(0));
     let maximum = i64::from(i32_field(target, "max_hp").unwrap_or(1).max(1));
+    let count = |ids: &[i32]| {
+        i32::try_from(
+            message_list(target, "state_changes")
+                .iter()
+                .filter(|change| {
+                    ids.contains(&i32_field(change, "state_change_id").unwrap_or_default())
+                })
+                .count(),
+        )
+        .unwrap_or(i32::MAX)
+    };
+    let negative_count = registry()
+        .ok()
+        .map_or(0, |rules| count(&rules.negative_state_ids));
+    let abnormal_count = registry()
+        .ok()
+        .map_or(0, |rules| count(&rules.abnormal_state_ids));
+    let positive_count = registry()
+        .ok()
+        .map_or(0, |rules| count(&rules.positive_state_ids));
     rule.condition
         .get("target_hp_min")
         .is_none_or(|n| hp * 100 >= maximum * i64::from(*n))
@@ -30,6 +101,10 @@ pub(super) fn target_condition(rule: &Rule, target: &DynamicMessage) -> bool {
             .condition
             .get("target_hp_max")
             .is_none_or(|n| hp * 100 <= maximum * i64::from(*n))
+        && rule
+            .condition
+            .get("target_hp_below")
+            .is_none_or(|n| hp * 100 < maximum * i64::from(*n))
         && rule
             .condition
             .get("target_negative")
@@ -43,6 +118,65 @@ pub(super) fn target_condition(rule: &Rule, target: &DynamicMessage) -> bool {
                         })
                     })
             })
+        && rule
+            .condition
+            .get("target_positive")
+            .is_none_or(|required| *required == 0 || positive_count > 0)
+        && rule
+            .condition
+            .get("target_abnormal")
+            .is_none_or(|required| {
+                *required == 0
+                    || registry().ok().is_some_and(|rules| {
+                        message_list(target, "state_changes").iter().any(|change| {
+                            rules
+                                .abnormal_state_ids
+                                .contains(&i32_field(change, "state_change_id").unwrap_or_default())
+                        })
+                    })
+            })
+        && rule
+            .condition
+            .get("target_negative_count_min")
+            .is_none_or(|minimum| negative_count >= *minimum)
+        && rule
+            .condition
+            .get("target_negative_count_max")
+            .is_none_or(|maximum| negative_count <= *maximum)
+        && rule
+            .condition
+            .get("target_abnormal_count_min")
+            .is_none_or(|minimum| abnormal_count >= *minimum)
+        && rule
+            .condition
+            .get("target_abnormal_count_max")
+            .is_none_or(|maximum| abnormal_count <= *maximum)
+        && rule
+            .condition
+            .get("target_state_id")
+            .is_none_or(|state_id| {
+                message_list(target, "state_changes")
+                    .iter()
+                    .any(|change| i32_field(change, "state_change_id") == Some(*state_id))
+            })
+        && rule
+            .condition
+            .get("target_state_count_id")
+            .is_none_or(|state_id| {
+                let minimum = rule
+                    .condition
+                    .get("target_state_count_min")
+                    .copied()
+                    .unwrap_or(1);
+                i32::try_from(
+                    message_list(target, "state_changes")
+                        .iter()
+                        .filter(|change| i32_field(change, "state_change_id") == Some(*state_id))
+                        .count(),
+                )
+                .unwrap_or(i32::MAX)
+                    >= minimum
+            })
 }
 
 pub(crate) fn selected(
@@ -51,32 +185,98 @@ pub(crate) fn selected(
     target: &DynamicMessage,
     targets: &[i32],
 ) -> bool {
+    selected_for_source_character_with_condition_target(
+        rule,
+        source,
+        message_i32_field(source, "ally", "character_id").unwrap_or_default(),
+        target,
+        target,
+        targets,
+    )
+}
+
+pub(super) fn selected_with_condition_target(
+    rule: &Rule,
+    source: &DynamicMessage,
+    target: &DynamicMessage,
+    condition_target: &DynamicMessage,
+    targets: &[i32],
+) -> bool {
+    selected_for_source_character_with_condition_target(
+        rule,
+        source,
+        message_i32_field(source, "ally", "character_id").unwrap_or_default(),
+        target,
+        condition_target,
+        targets,
+    )
+}
+
+pub(super) fn selected_for_source_character(
+    rule: &Rule,
+    source: &DynamicMessage,
+    source_character_id: i32,
+    target: &DynamicMessage,
+    targets: &[i32],
+) -> bool {
+    selected_for_source_character_with_condition_target(
+        rule,
+        source,
+        source_character_id,
+        target,
+        target,
+        targets,
+    )
+}
+
+fn selected_for_source_character_with_condition_target(
+    rule: &Rule,
+    source: &DynamicMessage,
+    source_character_id: i32,
+    target: &DynamicMessage,
+    condition_target: &DynamicMessage,
+    targets: &[i32],
+) -> bool {
     let id = i32_field(target, "member_id").unwrap_or(0);
+    let source_id = i32_field(source, "member_id").unwrap_or(0);
     let recipient_matches = match rule.target.as_str() {
         "self" => Some(id) == i32_field(source, "member_id"),
         "allies" => member_type(source).ok() == member_type(target).ok(),
         "enemies" => member_type(source).ok() != member_type(target).ok(),
         "targets" => targets.contains(&id),
+        "highest_attack_ally" | "highest_magic_ally" => targets.contains(&id),
+        "all" => true,
         _ => false,
     };
     recipient_matches
-        && target_condition(rule, target)
+        && target_condition(rule, condition_target)
         && (rule.source_character_ids.is_empty()
-            || message_i32_field(source, "ally", "character_id")
-                .is_some_and(|id| rule.source_character_ids.contains(&id)))
-        && (rule.target_character_ids.is_empty()
-            || message_i32_field(target, "ally", "character_id")
-                .is_some_and(|id| rule.target_character_ids.contains(&id)))
+            || rule.source_character_ids.contains(&source_character_id))
+        && target_character_matches(rule, source_id, id, target)
+}
+
+fn target_character_matches(
+    rule: &Rule,
+    source_id: i32,
+    target_id: i32,
+    target: &DynamicMessage,
+) -> bool {
+    rule.target_character_ids.is_empty()
+        || (rule.include_source && source_id == target_id)
+        || message_i32_field(target, "ally", "character_id")
+            .is_some_and(|id| rule.target_character_ids.contains(&id))
 }
 
 pub(super) fn state_application_blocked(
     target: &DynamicMessage,
-    state_id: i32,
+    rule: &Rule,
 ) -> Result<bool, StateError> {
     let rules = registry()?;
-    let immunities = if rules.negative_state_ids.contains(&state_id) {
+    let immunities = if rule.positive {
+        &rules.positive_immunity_state_ids
+    } else if rules.negative_state_ids.contains(&rule.state_id) {
         &rules.negative_immunity_state_ids
-    } else if rules.abnormal_state_ids.contains(&state_id) {
+    } else if rules.abnormal_state_ids.contains(&rule.state_id) {
         &rules.abnormal_immunity_state_ids
     } else {
         return Ok(false);
@@ -89,8 +289,51 @@ pub(super) fn state_application_blocked(
 pub(super) fn contextual_rule(rule: &Rule) -> bool {
     rule.trigger.is_some()
         || rule.critical_only
+        || (rule.mode == "passive" && rule.weak_only)
+        || rule.target_broken
         || !rule.skill_types.is_empty()
+        || !rule.skill_target_types.is_empty()
         || !rule.attack_attributes.is_empty()
+        || !rule.source_state_ids.is_empty()
+        || rule.condition.contains_key("target_state_id")
+        || opponent_contextual_rule(rule)
+}
+
+pub(super) fn opponent_contextual_rule(rule: &Rule) -> bool {
+    rule.condition.contains_key("opponent_negative")
+        || rule.condition.contains_key("opponent_abnormal")
+        || rule.condition.contains_key("opponent_hp_max")
+}
+
+pub(super) fn opponent_condition(rule: &Rule, target: &DynamicMessage) -> bool {
+    let hp = i64::from(i32_field(target, "hp").unwrap_or_default());
+    let maximum = i64::from(i32_field(target, "max_hp").unwrap_or(1).max(1));
+    let has = |ids: &[i32]| {
+        message_list(target, "state_changes")
+            .iter()
+            .any(|change| ids.contains(&i32_field(change, "state_change_id").unwrap_or_default()))
+    };
+    rule.condition
+        .get("opponent_negative")
+        .is_none_or(|required| {
+            *required == 0
+                || registry()
+                    .ok()
+                    .is_some_and(|rules| has(&rules.negative_state_ids))
+        })
+        && rule
+            .condition
+            .get("opponent_abnormal")
+            .is_none_or(|required| {
+                *required == 0
+                    || registry()
+                        .ok()
+                        .is_some_and(|rules| has(&rules.abnormal_state_ids))
+            })
+        && rule
+            .condition
+            .get("opponent_hp_max")
+            .is_none_or(|limit| hp * 100 <= maximum * i64::from(*limit))
 }
 
 pub(super) fn context_matches(
@@ -102,6 +345,10 @@ pub(super) fn context_matches(
     (rule.source_character_ids.is_empty()
         || rule.source_character_ids.contains(&source_character_id))
         && (rule.skill_types.is_empty() || rule.skill_types.contains(&skill.skill_type))
+        && (rule.skill_target_types.is_empty()
+            || skill
+                .skill_target_type
+                .is_some_and(|target_type| rule.skill_target_types.contains(&target_type)))
         && (rule.attack_attributes.is_empty()
             || skill
                 .attack_attributes
@@ -127,9 +374,7 @@ pub(super) fn contextual_recipient(passive: &Passive, target: &DynamicMessage) -
         _ => false,
     };
     recipient_matches
-        && (passive.rule.target_character_ids.is_empty()
-            || message_i32_field(target, "ally", "character_id")
-                .is_some_and(|id| passive.rule.target_character_ids.contains(&id)))
+        && target_character_matches(&passive.rule, passive.source, target_id, target)
         // Contextual owner-H.P. conditions need the owner's message.  Current
         // compiled contextual rules are unconditional; keep unknown forms off
         // rather than evaluating them against the wrong party member.

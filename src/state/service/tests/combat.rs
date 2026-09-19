@@ -103,7 +103,11 @@ fn generic_battle_timeline_uses_master_data_slot_counts() {
         .filter(|member| bool_field(member, "is_alive"))
     {
         let id = member_id(member).unwrap();
-        let expected = if member_type(member).unwrap() == 0 { 2 } else { 3 };
+        let expected = if member_type(member).unwrap() == 0 {
+            2
+        } else {
+            3
+        };
         assert_eq!(
             units
                 .iter()
@@ -359,8 +363,14 @@ fn terminal_battle_advances_action_cursor() {
     let action_number = i32_field(&action, "number").unwrap();
     assert_eq!(action_number, 1);
     assert_eq!(runtime.next_action_number, action_number + 1);
-    assert_eq!(i32_field(&attack.state, "total_turn"), Some(action_number + 1));
-    assert_eq!(current_battle_status(&attack.state).unwrap(), BATTLE_STATUS_WON);
+    assert_eq!(
+        i32_field(&attack.state, "total_turn"),
+        Some(action_number + 1)
+    );
+    assert_eq!(
+        current_battle_status(&attack.state).unwrap(),
+        BATTLE_STATUS_WON
+    );
 }
 
 #[test]
@@ -770,15 +780,26 @@ fn battle_tool_attribute_traits_follow_catalog_attributes() {
         traits: vec![TutorialTraitParam { id: 6, rank: 5 }],
         ..plain.clone()
     };
-    let plain_damage =
-        policy_tool_damage(&rules, &plain, &members, target, skill, None, false, 10_000).unwrap();
-    let blessed_damage = policy_tool_damage(
+    let plain_damage = policy_tool_damage(
         &rules,
-        &fire_blessing,
+        &[plain],
         &members,
         target,
         skill,
         None,
+        false,
+        false,
+        10_000,
+    )
+    .unwrap();
+    let blessed_damage = policy_tool_damage(
+        &rules,
+        &[fire_blessing],
+        &members,
+        target,
+        skill,
+        None,
+        false,
         false,
         10_000,
     )
@@ -856,22 +877,24 @@ fn battle_tool_damage_uses_contextual_incoming_modifiers() {
         .unwrap();
     let plain = policy_tool_damage(
         &rules,
-        &tool,
+        &[tool.clone()],
         &baseline_members,
         baseline_target,
         skill,
         None,
+        false,
         false,
         10_000,
     )
     .unwrap();
     let with_incoming = policy_tool_damage(
         &rules,
-        &tool,
+        &[tool],
         &members,
         target,
         skill,
         Some(&runtime),
+        false,
         false,
         10_000,
     )
@@ -911,7 +934,7 @@ fn battle_tool_healing_uses_source_and_target_modifiers() {
         .collect();
     let source = allies[0].clone();
     let target = source.clone();
-    let plain = policy_tool_heal(&rules, &tool, skill, &source, &target).unwrap();
+    let plain = policy_tool_heal(&rules, &[tool.clone()], skill, &source, &target).unwrap();
     let mut boosted_source = source.clone();
     boosted_source.set_field_by_name(
         "state_changes",
@@ -926,7 +949,8 @@ fn battle_tool_healing_uses_source_and_target_modifiers() {
             effects::display(&proto, 50014, 1_000, -1).unwrap(),
         )]),
     );
-    let boosted = policy_tool_heal(&rules, &tool, skill, &boosted_source, &boosted_target).unwrap();
+    let boosted =
+        policy_tool_heal(&rules, &[tool], skill, &boosted_source, &boosted_target).unwrap();
     assert_eq!(boosted, plain * 12 / 10);
 }
 

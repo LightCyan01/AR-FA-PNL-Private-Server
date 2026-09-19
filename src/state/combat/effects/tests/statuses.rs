@@ -35,11 +35,157 @@ fn direct_statuses_stack_tick_and_gate_the_turn() {
         .find(|member| member_type(member).ok() == Some(1))
         .and_then(|member| member_id(&member).ok())
         .unwrap();
+    let poison_resistance = rule_for(72001062, "passive", "ability", 1990033)
+        .unwrap()
+        .unwrap()
+        .clone();
+    assert_eq!(poison_resistance.affected_state_ids, [940007]);
+    let all_resistance = rule_for(72001115, "passive", "ability", 0)
+        .unwrap()
+        .unwrap()
+        .clone();
+    assert!(all_resistance.affected_state_ids.is_empty());
+    let target_type = message_list(&state, "members")
+        .into_iter()
+        .find(|member| i32_field(member, "member_id") == Some(target))
+        .and_then(|member| member_type(&member).ok())
+        .unwrap();
+    runtime.passives.push(Passive {
+        source: target,
+        value: 3_000,
+        rule: poison_resistance,
+        source_character_id: 0,
+        source_type: target_type,
+    });
+    let resistance_action = (1..1_000)
+        .find(|number| {
+            deterministic_roll(
+                b"status-test",
+                &transaction,
+                *number,
+                b"state-change",
+                target,
+                0,
+            ) % 10_000
+                < 3_000
+        })
+        .unwrap();
+    let poison = TutorialSkillEffect {
+        id: 780080004,
+        value: 200,
+    };
+    let resisted = runtime
+        .apply_for_action(
+            &proto,
+            &mut state,
+            source,
+            0,
+            std::slice::from_ref(&poison),
+            &[target],
+            true,
+            "after",
+            None,
+            3_000,
+            b"status-test",
+            &transaction,
+            resistance_action,
+        )
+        .unwrap();
+    assert_eq!(
+        i32_or_enum_field(&resisted[0], "deal_state_change_result"),
+        Some(2)
+    );
+    let paralysis = runtime
+        .apply_for_action(
+            &proto,
+            &mut state,
+            source,
+            0,
+            &[TutorialSkillEffect {
+                id: 780023003,
+                value: 2_500,
+            }],
+            &[target],
+            true,
+            "after",
+            None,
+            3_000,
+            b"status-test",
+            &transaction,
+            resistance_action,
+        )
+        .unwrap();
+    assert_eq!(
+        i32_or_enum_field(&paralysis[0], "deal_state_change_result"),
+        Some(1)
+    );
+    runtime.passives.clear();
+    let mut members = message_list(&state, "members");
+    members
+        .iter_mut()
+        .find(|member| i32_field(member, "member_id") == Some(target))
+        .unwrap()
+        .set_field_by_name("state_changes", Value::List(Vec::new()));
+    state.set_field_by_name(
+        "members",
+        Value::List(members.into_iter().map(Value::Message).collect()),
+    );
     let explicit_poison_skill = gameplay
         .skills
         .iter()
         .find(|skill| skill.id == 22000471)
         .unwrap();
+    for skill_id in [11001984, 12002766, 12003591, 14000566, 14002500] {
+        let rule = rule_for(91000931, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                rule.operation.as_str(),
+                rule.target.as_str(),
+                rule.state_id,
+                rule.duration,
+            ),
+            ("status", "targets", 940005, 2)
+        );
+    }
+    let blind = rule_for(91001388, "active", "skill", 12003642)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            blind.operation.as_str(),
+            blind.target.as_str(),
+            blind.state_id,
+            blind.duration,
+        ),
+        ("status", "targets", 940002, 1)
+    );
+    let shared_blind = rule_for(780046020, "active", "skill", 20001613)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            shared_blind.operation.as_str(),
+            shared_blind.target.as_str(),
+            shared_blind.state_id,
+            shared_blind.duration,
+        ),
+        ("status", "targets", 940002, 3)
+    );
+    let resistance_down = rule_for(780132011, "active", "skill", 32003897)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            resistance_down.operation.as_str(),
+            resistance_down.target.as_str(),
+            resistance_down.sign,
+            &resistance_down.expiry,
+            resistance_down.duration,
+        ),
+        ("abnormal_resistance", "enemies", -1, &Expiry::Turn, 2)
+    );
     assert_eq!(explicit_poison_skill.state_change_application_rate, 8_000);
     assert_eq!(
         gameplay
@@ -59,6 +205,35 @@ fn direct_statuses_stack_tick_and_gate_the_turn() {
             .unwrap()
             .duration,
         5
+    );
+    for (effect_id, duration) in [(91000951, 2), (71203002, 3)] {
+        let rule = registry()
+            .unwrap()
+            .rules
+            .iter()
+            .find(|rule| rule.id == effect_id)
+            .unwrap();
+        assert_eq!((rule.state_id, rule.duration), (940007, duration));
+    }
+    for (effect_id, skill_id, duration) in [(780063000, 32002681, 2), (780056012, 32000809, 3)] {
+        let rule = rule_for(effect_id, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!((rule.state_id, rule.duration), (940007, duration));
+    }
+    let shared_poison = rule_for(1039, "active", "skill", 20000627)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (shared_poison.state_id, shared_poison.duration),
+        (940007, 1)
+    );
+    let poison_override = rule_for(1039, "active", "skill", 20008490)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (poison_override.state_id, poison_override.duration),
+        (940007, 3)
     );
     let miss_action = (1..1_000)
         .find(|number| {
@@ -104,7 +279,7 @@ fn direct_statuses_stack_tick_and_gate_the_turn() {
     .into_iter()
     .all(|change| i32_field(&change, "state_change_id") != Some(940007)));
     let poison = TutorialSkillEffect {
-        id: 780010025,
+        id: 780080004,
         value: 200,
     };
     let applied = runtime
@@ -138,6 +313,54 @@ fn direct_statuses_stack_tick_and_gate_the_turn() {
             .count(),
         3
     );
+    runtime
+        .apply_for_action(
+            &proto,
+            &mut state,
+            source,
+            0,
+            &[TutorialSkillEffect {
+                id: 780107001,
+                value: 0,
+            }],
+            &[target],
+            true,
+            "after",
+            None,
+            10_000,
+            b"status-test",
+            &transaction,
+            2,
+        )
+        .unwrap();
+    let blocked = runtime
+        .apply(
+            &proto,
+            &mut state,
+            target,
+            &[TutorialSkillEffect {
+                id: 91001017,
+                value: 1_000,
+            }],
+            &[target],
+            true,
+            "after",
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        i32_or_enum_field(&blocked[0], "deal_state_change_result"),
+        Some(4)
+    );
+    assert!(message_list(
+        &message_list(&state, "members")
+            .into_iter()
+            .find(|member| i32_field(member, "member_id") == Some(target))
+            .unwrap(),
+        "state_changes",
+    )
+    .into_iter()
+    .all(|change| i32_field(&change, "state_change_id") != Some(910050)));
     let (ticks, disabled, killed) = runtime
         .prepare_turn(&proto, &mut state, target, b"status-test", &transaction, 2)
         .unwrap();
@@ -190,7 +413,6 @@ fn direct_statuses_stack_tick_and_gate_the_turn() {
     members
         .iter_mut()
         .find(|member| i32_field(member, "member_id") == Some(target))
-
         .unwrap()
         .set_field_by_name("state_changes", Value::List(Vec::new()));
     state.set_field_by_name(
@@ -436,4 +658,60 @@ fn direct_statuses_stack_tick_and_gate_the_turn() {
             .count(),
         2
     );
+
+    runtime.expire(target, &[], true, false);
+    let mut members = message_list(&state, "members");
+    let target_member = members
+        .iter_mut()
+        .find(|member| i32_field(member, "member_id") == Some(target))
+        .unwrap();
+    target_member.set_field_by_name("hp", Value::I32(maximum_hp));
+    target_member.set_field_by_name("is_alive", Value::Bool(true));
+    target_member.set_field_by_name("state_changes", Value::List(Vec::new()));
+    state.set_field_by_name(
+        "members",
+        Value::List(members.into_iter().map(Value::Message).collect()),
+    );
+    runtime
+        .apply_for_action(
+            &proto,
+            &mut state,
+            source,
+            14000711,
+            &[TutorialSkillEffect {
+                id: 91001064,
+                value: 0,
+            }],
+            &[target],
+            true,
+            "after",
+            None,
+            10_000,
+            b"status-test",
+            &transaction,
+            action_number + 3,
+        )
+        .unwrap();
+    assert!(message_list(&state, "members")
+        .iter()
+        .find(|member| i32_field(member, "member_id") == Some(target))
+        .is_some_and(|member| bool_field(member, "is_stun")));
+    let (stun_results, disabled, killed) = runtime
+        .prepare_turn(
+            &proto,
+            &mut state,
+            target,
+            b"status-test",
+            &transaction,
+            action_number + 4,
+        )
+        .unwrap();
+    assert!(disabled && !killed);
+    assert!(stun_results
+        .iter()
+        .any(|result| bool_field(result, "disabled_action")));
+    assert!(message_list(&state, "members")
+        .iter()
+        .find(|member| i32_field(member, "member_id") == Some(target))
+        .is_some_and(|member| !bool_field(member, "is_stun")));
 }

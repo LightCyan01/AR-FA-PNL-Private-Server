@@ -53,6 +53,7 @@ pub(crate) fn battle_start(
         resources.clone(),
         quest_id,
         run.party_number,
+        None,
         Some(&status),
         BattleStartMode::Standard,
         now,

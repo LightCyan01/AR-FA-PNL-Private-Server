@@ -1,23 +1,67 @@
-use super::registry::{registry, Expiry, Rule};
-use super::runtime::{Baseline, Instance, Passive, Runtime};
-use super::runtime_match::{amount, condition, contextual_rule, selected};
-use super::runtime_results::display;
+use super::registry::{registry, rule_for_occurrence, Expiry, Rule};
+use super::runtime::{Baseline, Instance, NestedActionInstance, Passive, Runtime};
+use super::runtime_lamp::is_lamp_ability_effect;
+use super::runtime_match::{amount, condition, contextual_rule, selected_for_source_character};
+use super::runtime_resources::{add_burst_gauge, add_party_gauge};
+use super::runtime_results::{display, level_display};
 use crate::state::combat::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
 
 impl Runtime {
+    fn register_nested_enemy(&mut self, source: i32, enemy_id: i32) -> Result<(), StateError> {
+        for rule in registry()?.nested_actions.iter().filter(|rule| {
+            rule.owner_type == "ability" && rule.source_enemy_ids.contains(&enemy_id)
+        }) {
+            self.nested_actions.push(NestedActionInstance {
+                source,
+                target: source,
+                remaining: rule.duration,
+                rule: rule.clone(),
+            });
+        }
+        Ok(())
+    }
+
+    fn register_nested_ability(&mut self, source: i32, ability_id: i32) -> Result<(), StateError> {
+        for rule in registry()?
+            .nested_actions
+            .iter()
+            .filter(|rule| rule.owner_type == "ability" && rule.owner_id == ability_id)
+        {
+            if rule.state_id > 0 {
+                self.managed
+                    .entry(source)
+                    .or_default()
+                    .insert(rule.state_id);
+            }
+            self.nested_actions.push(NestedActionInstance {
+                source,
+                target: source,
+                remaining: rule.duration,
+                rule: rule.clone(),
+            });
+        }
+        Ok(())
+    }
+
     fn register_passive(
         &mut self,
         source: i32,
         source_character_id: i32,
         source_type: i32,
+        ability_id: i32,
+        effect_index: Option<usize>,
         effect: &TutorialSkillEffect,
         leader: bool,
     ) -> Result<(), StateError> {
-        let Some(rule) = registry()?
-            .rules
-            .iter()
-            .find(|rule| rule.id == effect.id && rule.mode == "passive")
+        if is_lamp_ability_effect(ability_id, effect.id)?
+            || rule_for_occurrence(effect.id, "catalog", "ability", ability_id, effect_index)?
+                .is_some()
+        {
+            return Ok(());
+        }
+        let Some(rule) =
+            rule_for_occurrence(effect.id, "passive", "ability", ability_id, effect_index)?
         else {
             self.unsupported.insert(effect.id);
             return Ok(());
@@ -54,9 +98,11 @@ impl Runtime {
 
     pub(crate) fn initialize(
         proto: &ProtoRegistry,
+        rules: &TutorialRules,
         state: &mut DynamicMessage,
         transaction: &str,
         party: &[BattlePartyMember],
+        external_passives: &[BattleExternalPassive],
     ) -> Result<Self, StateError> {
         let mut runtime = Self::default();
         runtime.prepare(state, transaction)?;
@@ -69,12 +115,150 @@ impl Runtime {
             let Some(owner) = party.iter().find(|p| p.character_id == character) else {
                 continue;
             };
-            for effect in &owner.passives {
-                runtime.register_passive(id, character, source_type, effect, false)?;
+            for passive in &owner.passives {
+                runtime.register_passive(
+                    id,
+                    character,
+                    source_type,
+                    passive.ability_id,
+                    passive.effect_index,
+                    &passive.effect,
+                    false,
+                )?;
             }
-            for effect in &owner.leader_passives {
-                runtime.register_passive(id, character, source_type, effect, true)?;
+            for passive in &owner.leader_passives {
+                runtime.register_passive(
+                    id,
+                    character,
+                    source_type,
+                    passive.ability_id,
+                    passive.effect_index,
+                    &passive.effect,
+                    true,
+                )?;
             }
+            for ability_id in &owner.ability_ids {
+                runtime.register_nested_ability(id, *ability_id)?;
+                runtime.register_lamp_ability(id, *ability_id)?;
+            }
+        }
+        if !external_passives.is_empty() {
+            let leader = party
+                .iter()
+                .find(|member| member.is_leader)
+                .ok_or(StateError::InvalidRequest)?;
+            let source = message_list(state, "members")
+                .into_iter()
+                .find(|member| {
+                    message_i32_field(member, "ally", "character_id") == Some(leader.character_id)
+                })
+                .ok_or(StateError::InvalidRequest)?;
+            let source_id = member_id(&source)?;
+            for (source_character_id, ability_id, effect_index, effect) in external_passives {
+                runtime.register_passive(
+                    source_id,
+                    source_character_id.unwrap_or(leader.character_id),
+                    0,
+                    *ability_id,
+                    *effect_index,
+                    effect,
+                    false,
+                )?;
+            }
+        }
+        runtime.initialize_skill_lamps(proto, state)?;
+        let mut start_gain = 0i64;
+        let mut start_burst = BTreeMap::<i32, i32>::new();
+        let battle_start = runtime
+            .passives
+            .iter()
+            .filter(|passive| passive.rule.trigger.as_deref() == Some("battle_start"))
+            .cloned()
+            .collect::<Vec<_>>();
+        for passive in battle_start {
+            match passive.rule.operation.as_str() {
+                "bomb_gauge" => {
+                    start_gain = start_gain
+                        .checked_add(i64::from(passive.value))
+                        .ok_or(StateError::InvalidRequest)?;
+                }
+                "burst_gauge" => {
+                    let value = start_burst.entry(passive.source).or_default();
+                    *value = value
+                        .checked_add(passive.value)
+                        .ok_or(StateError::InvalidRequest)?;
+                }
+                "party_gauge" => {
+                    add_party_gauge(state, passive.value)?;
+                }
+                "heal" => {
+                    super::runtime_lamp::heal_all(
+                        proto,
+                        state,
+                        passive.source,
+                        passive.rule.id,
+                        passive.value,
+                    )?;
+                }
+                _ if passive.rule.target == "self"
+                    && passive.rule.expiry != Expiry::Permanent
+                    && passive.rule.duration > 0
+                    && passive.rule.state_id > 0 =>
+                {
+                    let mut rule = passive.rule;
+                    rule.trigger = None;
+                    runtime
+                        .managed
+                        .entry(passive.source)
+                        .or_default()
+                        .insert(rule.state_id);
+                    runtime.instances.push(Instance {
+                        source: passive.source,
+                        source_character_id: passive.source_character_id,
+                        target: passive.source,
+                        value: passive.value,
+                        remaining: rule.duration,
+                        rule,
+                    });
+                }
+                _ => return Err(StateError::InvalidRequest),
+            }
+        }
+        runtime.passives.retain(|passive| {
+            passive.rule.trigger.as_deref() != Some("battle_start")
+                || passive.rule.expiry == Expiry::Permanent
+                || passive.rule.state_id <= 0
+        });
+        if start_gain != 0 {
+            let maximum = rules.constants.max_bomb_gauge;
+            let delta = i64::from(maximum).saturating_mul(start_gain) / 10_000;
+            let current = i32_field(state, "bomb_gauge").unwrap_or_default().max(0);
+            state.set_field_by_name(
+                "bomb_gauge",
+                Value::I32(
+                    i64::from(current)
+                        .saturating_add(delta)
+                        .clamp(0, i64::from(maximum)) as i32,
+                ),
+            );
+        }
+        if !start_burst.is_empty() {
+            let mut members = message_list(state, "members");
+            for (source, value) in start_burst {
+                let member = members
+                    .iter_mut()
+                    .find(|member| member_id(member).ok() == Some(source))
+                    .ok_or(StateError::InvalidRequest)?;
+                add_burst_gauge(
+                    member,
+                    value,
+                    rules.constants.burst_gauge_required_for_one_burst_skill,
+                )?;
+            }
+            state.set_field_by_name(
+                "members",
+                Value::List(members.into_iter().map(Value::Message).collect()),
+            );
         }
         runtime.refresh(proto, state)?;
         Ok(runtime)
@@ -106,7 +290,7 @@ impl Runtime {
                     let rule = registry()?
                         .rules
                         .iter()
-                        .find(|r| r.id == effect)
+                        .find(|rule| rule.id == effect && rule.mode == "active")
                         .ok_or(StateError::InvalidRequest)?
                         .clone();
                     let value = i32_field(&change, "value").unwrap_or(0);
@@ -154,6 +338,12 @@ impl Runtime {
             self.managed.retain(|id, _| allies.contains(id));
             self.instances.retain(|i| allies.contains(&i.target));
             self.passives.retain(|p| allies.contains(&p.source));
+            self.nested_actions
+                .retain(|action| allies.contains(&action.target));
+            self.extra_skills.retain(|id, _| allies.contains(id));
+            self.extra_turn_uses.retain(|id, _| allies.contains(id));
+            self.limited_effect_uses.retain(|id, _| allies.contains(id));
+            self.pending_extra_turns.clear();
             self.panel_damage_taken.retain(|id, _| allies.contains(id));
             self.pending_actor = 0;
             self.pending_blind_rate = 0;
@@ -164,6 +354,10 @@ impl Runtime {
             let id = member_id(&member)?;
             if self.bases.contains_key(&id) {
                 continue;
+            }
+            if member_type(&member)? == 1 {
+                let enemy_id = enemy_member_status_enemy_id(&member)?;
+                self.register_nested_enemy(id, enemy_id)?;
             }
             let status = member_status(&member, "current_status")?;
             let stats = status
@@ -204,8 +398,10 @@ impl Runtime {
             let id = member_id(member)?;
             let base = self.bases.get(&id).ok_or(StateError::InvalidRequest)?;
             let mut summaries = base.summaries.clone();
+            let mut level_summaries = BTreeMap::<i32, i32>::new();
             let mut stat_rates = BTreeMap::<String, i64>::new();
             let mut visible = BTreeMap::<i32, (i32, i32)>::new();
+            let mut levels = BTreeMap::<i32, (i32, i32)>::new();
             let mut add = |rule: &Rule, value: i32| -> Result<(), StateError> {
                 match rule.operation.as_str() {
                     "summary" => {
@@ -217,9 +413,33 @@ impl Runtime {
                     "attack" | "magic" | "defense" | "mental" | "speed" => {
                         *stat_rates.entry(rule.operation.clone()).or_default() += i64::from(value);
                     }
-                    "physical_taken" | "magic_taken" | "taken_down" | "attribute_taken"
-                    | "panel_disable" | "panel_convert" | "healing" | "healing_received"
-                    | "regeneration" | "negative_immunity" | "abnormal_immunity" => (), // read from the visible state by combat policy
+                    "physical_taken"
+                    | "magic_taken"
+                    | "taken_down"
+                    | "attribute_taken"
+                    | "panel_disable"
+                    | "panel_convert"
+                    | "panel_potency"
+                    | "healing"
+                    | "healing_received"
+                    | "regeneration"
+                    | "negative_immunity"
+                    | "abnormal_immunity"
+                    | "positive_immunity"
+                    | "negative_potency"
+                    | "positive_potency"
+                    | "given_negative_potency"
+                    | "given_positive_potency"
+                    | "damage_immunity"
+                    | "cover"
+                    | "cleanse_positive"
+                    | "reflection"
+                    | "evasion"
+                    | "abnormal_resistance"
+                    | "target_rate"
+                    | "status"
+                    | "initiative"
+                    | "marker" => (), // read at use sites
                     _ => return Err(StateError::InvalidRequest),
                 }
                 Ok(())
@@ -231,7 +451,13 @@ impl Runtime {
                 {
                     if bool_field(source, "is_alive")
                         && condition(&passive.rule, source)
-                        && selected(&passive.rule, source, member, &[])
+                        && selected_for_source_character(
+                            &passive.rule,
+                            source,
+                            passive.source_character_id,
+                            member,
+                            &[],
+                        )
                     {
                         if passive.rule.trigger.is_none()
                             && matches!(
@@ -243,6 +469,7 @@ impl Runtime {
                                     | "healing_received"
                                     | "negative_immunity"
                                     | "abnormal_immunity"
+                                    | "positive_immunity"
                             )
                         {
                             let entry = visible.entry(passive.rule.state_id).or_default();
@@ -262,10 +489,25 @@ impl Runtime {
                 }
             }
             for active in self.instances.iter().filter(|i| i.target == id) {
-                // Trigger predicates select the attack that creates an instance;
-                // once it exists, its client-visible state is unconditional until
-                // expiry. Non-trigger contextual rules remain formula-only.
-                if !contextual_rule(&active.rule) || active.rule.trigger.is_some() {
+                if active.rule.operation == "level_state" {
+                    for modifier in &active.rule.level_modifiers {
+                        let value = modifier
+                            .value
+                            .checked_mul(active.value)
+                            .ok_or(StateError::InvalidRequest)?;
+                        let current = level_summaries.entry(modifier.summary).or_default();
+                        *current = current
+                            .checked_add(value)
+                            .ok_or(StateError::InvalidRequest)?;
+                    }
+                    levels.insert(active.rule.state_id, (active.value, active.remaining));
+                    continue;
+                }
+                // Application predicates are already satisfied before the instance exists.
+                if !contextual_rule(&active.rule)
+                    || active.rule.trigger.is_some()
+                    || active.rule.target_broken
+                {
                     add(&active.rule, active.value)?;
                 }
                 let entry = visible.entry(active.rule.state_id).or_default();
@@ -278,6 +520,29 @@ impl Runtime {
                 } else {
                     entry.1.max(active.remaining)
                 };
+            }
+            drop(add);
+            for (summary, value) in level_summaries {
+                let current = summaries.entry(summary).or_default();
+                *current = current
+                    .checked_add(value)
+                    .ok_or(StateError::InvalidRequest)?;
+            }
+            for action in self
+                .nested_actions
+                .iter()
+                .filter(|action| action.target == id && action.rule.state_id > 0)
+            {
+                let entry = visible.entry(action.rule.state_id).or_default();
+                entry.1 = if action.remaining < 0 || entry.1 < 0 {
+                    -1
+                } else {
+                    entry.1.max(action.remaining)
+                };
+                self.managed
+                    .entry(id)
+                    .or_default()
+                    .insert(action.rule.state_id);
             }
             let mut status = member_status(member, "current_status")?;
             for (name, base_value) in &base.stats {
@@ -313,6 +578,9 @@ impl Runtime {
             });
             for (state_id, (value, remaining)) in visible {
                 changes.push(display(proto, state_id, value, remaining)?);
+            }
+            for (state_id, (level, remaining)) in levels {
+                changes.push(level_display(proto, state_id, level, remaining)?);
             }
             member.set_field_by_name(
                 "state_changes",

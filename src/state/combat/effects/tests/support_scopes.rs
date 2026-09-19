@@ -3,12 +3,124 @@ use crate::state::combat::prelude::*;
 use std::path::Path;
 
 #[test]
+fn attribute_or_tag_support_buffs_apply_each_modifier_once() {
+    let rule = |effect_id, skill_id| {
+        rule_for(effect_id, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap()
+    };
+    let fire_magic = rule(91001679, 11002506);
+    let fire_damage = rule(91001680, 11002506);
+    let tag_magic = rule(91001683, 11002506);
+    let tag_damage = rule(91001684, 11002506);
+    assert_eq!(fire_magic.operation, "magic");
+    assert_eq!(
+        (fire_damage.operation.as_str(), fire_damage.summary),
+        ("summary", 1)
+    );
+    assert_eq!(
+        fire_magic.target_character_ids,
+        fire_damage.target_character_ids
+    );
+    assert_eq!(
+        tag_magic.target_character_ids,
+        tag_damage.target_character_ids
+    );
+    assert_eq!(tag_magic.target_character_ids, [50201, 50301, 50501]);
+    assert!(fire_magic
+        .target_character_ids
+        .iter()
+        .all(|id| !tag_magic.target_character_ids.contains(id)));
+
+    let impact_defense = rule(91001675, 11002700);
+    let impact_mental = rule(91001676, 11002700);
+    let tag_defense = rule(91001677, 11002700);
+    let tag_mental = rule(91001678, 11002700);
+    assert_eq!(
+        (
+            impact_defense.operation.as_str(),
+            impact_mental.operation.as_str(),
+        ),
+        ("defense", "mental")
+    );
+    assert_eq!(
+        impact_defense.target_character_ids,
+        impact_mental.target_character_ids
+    );
+    assert_eq!(
+        tag_defense.target_character_ids,
+        tag_mental.target_character_ids
+    );
+    assert_eq!(tag_defense.target_character_ids, [50101, 50401, 50601]);
+    assert!(impact_defense
+        .target_character_ids
+        .iter()
+        .all(|id| !tag_defense.target_character_ids.contains(id)));
+
+    for skill_id in [12003393, 14003398] {
+        let lightning_critical = rule(91002049, skill_id);
+        let lightning_item = rule(91002051, skill_id);
+        let tag_critical = rule(91002050, skill_id);
+        let tag_item = rule(91002054, skill_id);
+        assert_eq!(
+            (
+                lightning_critical.summary,
+                lightning_item.summary,
+                tag_critical.summary,
+                tag_item.summary,
+            ),
+            (7, 27, 7, 27)
+        );
+        assert_eq!(
+            lightning_critical.target_character_ids,
+            lightning_item.target_character_ids
+        );
+        assert_eq!(
+            tag_critical.target_character_ids,
+            tag_item.target_character_ids
+        );
+        assert!(lightning_critical
+            .target_character_ids
+            .iter()
+            .all(|id| !tag_critical.target_character_ids.contains(id)));
+
+        let self_magic = rule(91002053, skill_id);
+        assert_eq!(
+            (self_magic.operation.as_str(), self_magic.target.as_str()),
+            ("magic", "self")
+        );
+        assert!(self_magic.target_broken);
+        assert!(self_magic.target_character_ids.is_empty());
+
+        let attacker_magic = rule(91002052, skill_id);
+        assert_eq!(
+            (
+                attacker_magic.operation.as_str(),
+                attacker_magic.target.as_str()
+            ),
+            ("magic", "allies")
+        );
+        assert!(attacker_magic.target_broken);
+        assert!(!attacker_magic.target_character_ids.is_empty());
+        assert!(!attacker_magic.include_source);
+    }
+}
+
+#[test]
 fn common_support_effects_keep_their_scope_and_conditions() {
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../schemas/atelier-resleriana-2.16.0.protoset"
     )))
     .unwrap();
+    let broken_attack = rule_for(91001162, "active", "skill", 14000696)
+        .unwrap()
+        .unwrap();
+    assert_eq!(broken_attack.operation, "attack");
+    assert_eq!(broken_attack.target, "highest_attack_ally");
+    assert!(broken_attack.target_broken);
+    assert_eq!(broken_attack.expiry, Expiry::Turn);
+    assert_eq!(broken_attack.duration, 1);
     let member = |member_id, member_type| {
         let mut status = empty_message(&proto, "blend.model.BattleCharacterStatus").unwrap();
         for field in ["attack", "defense", "hp", "magic", "mental", "speed"] {
@@ -39,12 +151,18 @@ fn common_support_effects_keep_their_scope_and_conditions() {
         member.set_field_by_name("state_change_summaries", Value::List(Vec::new()));
         member
     };
+    let mut high_magic = member(2, 0);
+    for field in ["current_status", "initial_status"] {
+        let mut status = member_status(&high_magic, field).unwrap();
+        status.set_field_by_name("magic", Value::I32(200));
+        high_magic.set_field_by_name(field, Value::Message(status));
+    }
     let mut state = empty_message(&proto, "blend.model.BattleState").unwrap();
     state.set_field_by_name(
         "members",
         Value::List(vec![
             Value::Message(member(1, 0)),
-            Value::Message(member(2, 0)),
+            Value::Message(high_magic),
             Value::Message(member(3, 1)),
         ]),
     );
@@ -151,6 +269,59 @@ fn common_support_effects_keep_their_scope_and_conditions() {
             None,
         )
         .unwrap();
+    let broken_magic = [TutorialSkillEffect {
+        id: 91001264,
+        value: 5_000,
+    }];
+    runtime
+        .apply_inner(
+            &proto,
+            &mut state,
+            1,
+            14002801,
+            &broken_magic,
+            &[3],
+            true,
+            "after",
+            None,
+            10_000,
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        message_list(&state, "members")
+            .into_iter()
+            .find(|member| i32_field(member, "member_id") == Some(2))
+            .and_then(|member| message_i32_field(&member, "current_status", "magic")),
+        Some(200)
+    );
+    let mut members = message_list(&state, "members");
+    let mut enemy_status = empty_message(&proto, "blend.model.BattleEnemy").unwrap();
+    enemy_status.set_field_by_name("is_broken", Value::Bool(true));
+    members
+        .iter_mut()
+        .find(|member| i32_field(member, "member_id") == Some(3))
+        .unwrap()
+        .set_field_by_name("enemy", Value::Message(enemy_status));
+    state.set_field_by_name(
+        "members",
+        Value::List(members.into_iter().map(Value::Message).collect()),
+    );
+    runtime
+        .apply_inner(
+            &proto,
+            &mut state,
+            1,
+            14002801,
+            &broken_magic,
+            &[3],
+            true,
+            "after",
+            None,
+            10_000,
+            None,
+        )
+        .unwrap();
 
     let members = message_list(&state, "members");
     let source = members
@@ -179,6 +350,10 @@ fn common_support_effects_keep_their_scope_and_conditions() {
         message_i32_field(source, "current_status", "attack"),
         Some(120)
     );
+    assert_eq!(
+        message_i32_field(ally, "current_status", "magic"),
+        Some(300)
+    );
     assert_eq!(incoming_multiplier_with_runtime(source, 1, None), 8_000);
     assert_eq!(incoming_multiplier_with_runtime(ally, 1, None), 2_000);
 
@@ -197,11 +372,19 @@ fn common_support_effects_keep_their_scope_and_conditions() {
             id: 91000906,
             value: 4_000,
         }],
+        limit_count: None,
+        max_lamp: 0,
+        require_command_value: false,
+        skill_destination: None,
         state_change_application_rate: 10_000,
         hp_damage_bonus: None,
     };
-    assert_eq!(instant_summary(&skill, enemy, false, 1).unwrap(), 0);
-    let mut broken = enemy.clone();
+    let mut unbroken = enemy.clone();
+    let mut enemy_status = member_status(&unbroken, "enemy").unwrap();
+    enemy_status.set_field_by_name("is_broken", Value::Bool(false));
+    unbroken.set_field_by_name("enemy", Value::Message(enemy_status));
+    assert_eq!(instant_summary(&skill, &unbroken, false, 1).unwrap(), 0);
+    let mut broken = unbroken;
     let mut enemy_status = empty_message(&proto, "blend.model.BattleEnemy").unwrap();
     enemy_status.set_field_by_name("is_broken", Value::Bool(true));
     broken.set_field_by_name("enemy", Value::Message(enemy_status));
@@ -326,11 +509,26 @@ fn tutorial_skill_damage_effects_use_their_master_context() {
             id: 91000904,
             value: 2_000,
         }],
+        limit_count: None,
+        max_lamp: 0,
+        require_command_value: false,
+        skill_destination: None,
         state_change_application_rate: 10_000,
         hp_damage_bonus: None,
     };
     assert_eq!(instant_summary(&critical, &target, true, 7).unwrap(), 2_000);
     assert_eq!(instant_summary(&critical, &target, false, 7).unwrap(), 0);
+    let current_attack = TutorialSkill {
+        effects: vec![TutorialSkillEffect {
+            id: 3000044,
+            value: 5_000,
+        }],
+        ..critical.clone()
+    };
+    assert_eq!(
+        instant_summary(&current_attack, &target, false, 6).unwrap(),
+        5_000
+    );
 
     let mut state = empty_message(&proto, "blend.model.BattleState").unwrap();
     let mut actor = empty_message(&proto, "blend.model.BattleMember").unwrap();
@@ -460,7 +658,6 @@ fn target_physical_damage_down_changes_only_physical_multiplier() {
             &[effect],
             &[enemy_id],
             true,
-
             "after",
             None,
         )

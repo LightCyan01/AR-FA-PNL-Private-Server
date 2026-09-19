@@ -391,6 +391,7 @@ pub(crate) fn reduce_battle_start_with_progression(
     resources: DynamicMessage,
     quest_id: i32,
     party_number: i32,
+    ship_id: Option<i32>,
     party_status: Option<&DynamicMessage>,
     mode: BattleStartMode,
     now: i64,
@@ -408,6 +409,7 @@ pub(crate) fn reduce_battle_start_with_progression(
         resources,
         quest,
         party_number,
+        ship_id,
         party_status,
         mode,
         now,
@@ -423,6 +425,7 @@ pub(crate) fn build_battle_start(
     resources: DynamicMessage,
     quest: &TutorialQuest,
     party_number: i32,
+    ship_id: Option<i32>,
     party_status: Option<&DynamicMessage>,
     mode: BattleStartMode,
     now: i64,
@@ -473,6 +476,14 @@ pub(crate) fn build_battle_start(
             party_number,
         )?,
     };
+    let (battle_ship, ship_tools, mut external_passives) =
+        resolve_battle_ship(proto, rules, atelier_rules, &resources, ship_id)?;
+    external_passives.extend(scaled_ability_effects(
+        rules,
+        &quest.field_ability_ids,
+        10_000,
+        None,
+    )?);
     apply_leader_passives(rules, &mut party_members)?;
     if battle.wave_ids.is_empty() || party_members.is_empty() {
         return Err(StateError::InvalidRequest);
@@ -549,10 +560,31 @@ pub(crate) fn build_battle_start(
     state.set_field_by_name("wave", Value::I32(1));
     state.set_field_by_name("total_turn", Value::I32(1));
     state.set_field_by_name("members", Value::List(member_values));
+    set_battle_field_effect(proto, &mut state, first_wave.field_effect_id)?;
+    state.set_field_by_name("ship", Value::Message(battle_ship));
+    state.set_field_by_name(
+        "ship_tools",
+        Value::List(ship_tools.into_iter().map(Value::Message).collect()),
+    );
+    state.set_field_by_name("bomb_gauge", Value::I32(rules.constants.initial_bomb_gauge));
     let start_txid = Uuid::new_v4().to_string();
-    let mut effects = effects::Runtime::initialize(proto, &mut state, &start_txid, &party_members)?;
+    let mut effects = effects::Runtime::initialize(
+        proto,
+        rules,
+        &mut state,
+        &start_txid,
+        &party_members,
+        &external_passives,
+    )?;
     let member_messages = message_list(&state, "members");
-    let timeline_values = tutorial_timeline_units(proto, rules, battle_id, 1, &member_messages)?;
+    let timeline_values = tutorial_timeline_units(
+        proto,
+        rules,
+        battle_id,
+        1,
+        &member_messages,
+        &effects.initiative_members(),
+    )?;
     state.set_field_by_name(
         "timeline_units",
         Value::List(timeline_values.into_iter().map(Value::Message).collect()),
@@ -578,11 +610,6 @@ pub(crate) fn build_battle_start(
                 .unwrap_or(500),
         ),
     );
-    state.set_field_by_name("bomb_gauge", Value::I32(rules.constants.initial_bomb_gauge));
-    state.set_field_by_name(
-        "ship",
-        Value::Message(empty_message(proto, "blend.model.BattleShip")?),
-    );
     set_base_enemy_numbers(proto, &mut state, &base_numbers)?;
     set_timeline_panels(
         proto,
@@ -591,7 +618,7 @@ pub(crate) fn build_battle_start(
         rules.constants.timeline_panel_count,
         1,
     )?;
-    effects.acquire_current_panel(&mut state)?;
+    effects.acquire_current_panel(proto, rules, &mut state)?;
     refresh_burst_enable(rules, &mut state)?;
 
     let mut start_state = state.clone();
@@ -777,6 +804,7 @@ pub(crate) fn reduce_battle_start(
         resources,
         quest_id,
         1,
+        None,
         None,
         BattleStartMode::Standard,
         now,

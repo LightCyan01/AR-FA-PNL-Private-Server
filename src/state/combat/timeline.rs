@@ -89,6 +89,7 @@ pub(crate) fn tutorial_timeline_units(
     battle_id: i32,
     wave: i32,
     members: &[DynamicMessage],
+    initiative_members: &BTreeSet<i32>,
 ) -> Result<Vec<DynamicMessage>, StateError> {
     let rows: &[(i32, i32, i32)] = match (battle_id, wave) {
         (10000279, 1) => &[
@@ -165,11 +166,62 @@ pub(crate) fn tutorial_timeline_units(
             (11, 2, 740),
             (13, 2, 760),
         ],
-        _ => return quest::initial_timeline(proto, rules, members),
+        _ => {
+            let mut units = quest::initial_timeline(proto, rules, members)?;
+            prioritize_initiative(&mut units, members, initiative_members)?;
+            return Ok(units);
+        }
     };
-    rows.iter()
+    let mut units = rows
+        .iter()
         .map(|(member_id, number, wait)| build_timeline_unit(proto, *member_id, *number, *wait))
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    prioritize_initiative(&mut units, members, initiative_members)?;
+    Ok(units)
+}
+
+fn prioritize_initiative(
+    units: &mut [DynamicMessage],
+    members: &[DynamicMessage],
+    initiative_members: &BTreeSet<i32>,
+) -> Result<(), StateError> {
+    if initiative_members.is_empty() {
+        return Ok(());
+    }
+    let mut initiative_max = None;
+    let mut other_min = None;
+    for unit in units
+        .iter()
+        .filter(|unit| i32_field(unit, "number") == Some(1))
+    {
+        let id = member_id(unit)?;
+        let wait = i32_field(unit, "wait").ok_or(StateError::InvalidRequest)?;
+        if initiative_members.contains(&id) {
+            initiative_max = Some(initiative_max.map_or(wait, |value: i32| value.max(wait)));
+        } else {
+            other_min = Some(other_min.map_or(wait, |value: i32| value.min(wait)));
+        }
+    }
+    let (Some(initiative_max), Some(other_min)) = (initiative_max, other_min) else {
+        return Ok(());
+    };
+    if initiative_max < other_min {
+        return Ok(());
+    }
+    let delay = initiative_max
+        .checked_add(1)
+        .and_then(|value| value.checked_sub(other_min))
+        .ok_or(StateError::InvalidRequest)?;
+    for unit in units.iter_mut() {
+        if !initiative_members.contains(&member_id(unit)?) {
+            let wait = i32_field(unit, "wait")
+                .and_then(|value| value.checked_add(delay))
+                .ok_or(StateError::InvalidRequest)?;
+            unit.set_field_by_name("wait", Value::I32(wait));
+        }
+    }
+    sort_timeline_units(units, members);
+    Ok(())
 }
 
 pub(crate) fn member_offense_and_defense(
@@ -435,6 +487,7 @@ pub(crate) fn policy_damage(
     skill: &TutorialSkill,
     resources: Option<&DynamicMessage>,
     runtime: Option<&effects::Runtime>,
+    opponent_count: i32,
     panel: (i128, i128),
     broken: bool,
     critical: bool,
@@ -445,13 +498,14 @@ pub(crate) fn policy_damage(
     let skill_damage_bonus = checked_i32(
         i64::from(state_change_summary_value(attacker, 1))
             + runtime.map_or(0, |runtime| {
-                runtime.contextual_summary(attacker, skill, critical, 1)
+                runtime.contextual_summary_against(attacker, Some(target), skill, critical, 1)
             })
-            + effects::instant_summary(skill, target, critical, 1)?
+            + effects::instant_summary_for_source(Some(attacker), skill, target, critical, 1)?
+            + effects::scaled_skill_damage(skill, attacker, opponent_count)?
             + policy_hp_damage_bonus(attacker, skill)?
             - i64::from(state_change_summary_value(attacker, 2))
             - runtime.map_or(0, |runtime| {
-                runtime.contextual_summary(attacker, skill, critical, 2)
+                runtime.contextual_summary_against(attacker, Some(target), skill, critical, 2)
             }),
     )?;
     let base = policy_damage_from_stats(
@@ -466,7 +520,15 @@ pub(crate) fn policy_damage(
         critical,
         variance,
     );
-    effects::secondary_damage(base, attacker, target, skill, runtime, critical)
+    effects::secondary_damage(
+        base,
+        attacker,
+        target,
+        skill,
+        runtime,
+        opponent_count,
+        critical,
+    )
 }
 
 pub(crate) fn policy_hp_damage_bonus(
@@ -506,7 +568,9 @@ pub(crate) fn policy_break_damage(
     target: &DynamicMessage,
     skill: &TutorialSkill,
     runtime: Option<&effects::Runtime>,
+    party_context: Option<(&TutorialRules, &[DynamicMessage])>,
     panel_multiplier: i128,
+    critical: bool,
     variance: u32,
 ) -> Result<i32, StateError> {
     let status = member_status(attacker, "current_status")?;
@@ -529,9 +593,10 @@ pub(crate) fn policy_break_damage(
     let rate = (10_000i64
         + i64::from(state_change_summary_value(attacker, 3))
         + runtime.map_or(0, |runtime| {
-            runtime.contextual_summary(attacker, skill, false, 3)
+            runtime.contextual_summary_against(attacker, Some(target), skill, critical, 3)
         })
-        + effects::instant_summary(skill, target, false, 3)?)
+        + effects::instant_summary_for_source(Some(attacker), skill, target, critical, 3)?
+        + effects::scaled_break_damage(skill, attacker, party_context)?)
     .clamp(0, 1_000_000);
     let incoming = (10_000i64
         + i64::from(state_change_summary_value(target, 13))
@@ -610,6 +675,9 @@ pub(crate) fn consume_timeline_turn(
     preserve_future_turns: bool,
 ) -> Result<DynamicMessage, StateError> {
     sort_timeline_units(units, members);
+    if let Some(movement) = consume_extra_timeline_turn(proto, units, members, id)? {
+        return Ok(movement);
+    }
     let from_index = units
         .iter()
         .position(|unit| i32_field(unit, "member_id") == Some(id))
@@ -751,6 +819,27 @@ pub(crate) fn delay_timeline_member_by_slots(
     id: i32,
     slots: usize,
 ) -> Result<Vec<DynamicMessage>, StateError> {
+    shift_timeline_member_by_slots(proto, units, members, id, slots, false)
+}
+
+pub(crate) fn advance_timeline_member_by_slots(
+    proto: &ProtoRegistry,
+    units: &mut [DynamicMessage],
+    members: &[DynamicMessage],
+    id: i32,
+    slots: usize,
+) -> Result<Vec<DynamicMessage>, StateError> {
+    shift_timeline_member_by_slots(proto, units, members, id, slots, true)
+}
+
+fn shift_timeline_member_by_slots(
+    proto: &ProtoRegistry,
+    units: &mut [DynamicMessage],
+    members: &[DynamicMessage],
+    id: i32,
+    slots: usize,
+    advance: bool,
+) -> Result<Vec<DynamicMessage>, StateError> {
     if slots == 0 {
         return Err(StateError::InvalidRequest);
     }
@@ -777,7 +866,14 @@ pub(crate) fn delay_timeline_member_by_slots(
         .filter(|unit| i32_field(unit, "member_id") != Some(id))
         .map(|unit| i32_field(unit, "wait").ok_or(StateError::InvalidRequest))
         .collect::<Result<Vec<_>, _>>()?;
-    let insertion_index = first_index.saturating_add(slots).min(other_waits.len());
+    let insertion_index = if advance {
+        first_index
+            .saturating_sub(slots)
+            .max(1)
+            .min(other_waits.len())
+    } else {
+        first_index.saturating_add(slots).min(other_waits.len())
+    };
     let lower = insertion_index
         .checked_sub(1)
         .and_then(|index| other_waits.get(index))
@@ -788,15 +884,15 @@ pub(crate) fn delay_timeline_member_by_slots(
         |upper| lower.saturating_add(upper.saturating_sub(lower) / 2),
     );
     let delta = shifted_wait.saturating_sub(first_wait);
-    if delta <= 0 {
-        return Err(StateError::InvalidRequest);
+    if (advance && delta >= 0) || (!advance && delta <= 0) {
+        return Ok(Vec::new());
     }
     for unit in units
         .iter_mut()
         .filter(|unit| i32_field(unit, "member_id") == Some(id))
     {
         let old_wait = i32_field(unit, "wait").ok_or(StateError::InvalidRequest)?;
-        unit.set_field_by_name("wait", Value::I32(old_wait.saturating_add(delta)));
+        unit.set_field_by_name("wait", Value::I32(old_wait.saturating_add(delta).max(0)));
     }
     sort_timeline_units(units, members);
     moved
@@ -886,6 +982,7 @@ pub(crate) fn current_actor(state: &DynamicMessage) -> Result<DynamicMessage, St
 
 pub(crate) fn select_target_ids(
     state: &DynamicMessage,
+    actor_id: i32,
     actor_type: i32,
     target_id: i32,
     skill: &TutorialSkill,
@@ -911,7 +1008,7 @@ pub(crate) fn select_target_ids(
         }
         Ok(living)
     } else if matches!(target_type, 1 | 2 | 3 | 6) {
-        if target_type == 1 && member_id(&current_actor(state)?)? != target_id {
+        if target_type == 1 && actor_id != target_id {
             return Err(StateError::InvalidRequest);
         }
         if !living.contains(&target_id) {
@@ -1031,6 +1128,10 @@ mod tests {
             attack_attributes: vec![5, 6],
             skill_target_type: Some(3),
             effects: Vec::new(),
+            limit_count: None,
+            max_lamp: 0,
+            require_command_value: false,
+            skill_destination: None,
             state_change_application_rate: 10_000,
             hp_damage_bonus: None,
         };

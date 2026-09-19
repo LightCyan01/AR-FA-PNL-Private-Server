@@ -253,12 +253,18 @@ pub(crate) struct TutorialRules {
     pub(crate) skills: Vec<TutorialSkill>,
     pub(crate) abilities: Vec<TutorialAbility>,
     pub(crate) effects: Vec<TutorialEffect>,
+    #[serde(default)]
+    pub(crate) summons_effects: Vec<TutorialSummonsEffect>,
     pub(crate) timeline_panels: Vec<TutorialPanel>,
     #[serde(default)]
     pub(crate) enemy_ai_units: Vec<TutorialEnemyAiUnit>,
     pub(crate) constants: TutorialBattleConstants,
     pub(crate) fixed_parties: Vec<TutorialFixedParty>,
     pub(crate) battle_tools: Vec<TutorialBattleTool>,
+    #[serde(default)]
+    pub(crate) battle_tool_mixes: Vec<TutorialBattleToolMix>,
+    #[serde(default)]
+    pub(crate) ship_tools: Vec<TutorialShipTool>,
     pub(crate) recipes: Vec<TutorialRecipe>,
     pub(crate) synthesis_characters: Vec<TutorialSynthesisSource>,
     pub(crate) synthesis_ingredients: Vec<TutorialSynthesisSource>,
@@ -439,6 +445,8 @@ pub(crate) struct TutorialQuest {
     pub(crate) battle_id: Option<i32>,
     #[serde(default)]
     pub(crate) battle_ids: Vec<i32>,
+    #[serde(default)]
+    pub(crate) field_ability_ids: Vec<i32>,
     pub(crate) fixed_party_id: Option<i32>,
     #[serde(default)]
     pub(crate) rental_fixed_party_id: Option<i32>,
@@ -479,6 +487,10 @@ pub(crate) struct TutorialBattleConstants {
     pub(crate) display_skill_wait_offset: i32,
     pub(crate) max_party_gauge: i32,
     pub(crate) turn_max_battle_tool_count: i32,
+    pub(crate) battle_tool_mix_minimum_skill_power: i32,
+    pub(crate) battle_tool_mix_rank_threshold_all: i32,
+    pub(crate) battle_tool_mix_rank_threshold_single: i32,
+    pub(crate) battle_tool_mix_skill_power_coefficient: i32,
     pub(crate) burst_gauge_required_for_one_burst_skill: i32,
     pub(crate) burst_gauge_heal_normal1: i32,
     pub(crate) burst_gauge_heal_normal2: i32,
@@ -491,6 +503,9 @@ pub(crate) struct TutorialBattleConstants {
     #[allow(dead_code)]
     pub(crate) burst_gauge_heal_counter: i32,
     pub(crate) initial_bomb_gauge: i32,
+    pub(crate) bomb_gauge_recovery_amount: i32,
+    pub(crate) max_bomb_gauge: i32,
+    pub(crate) max_enemy_member_count: i32,
     pub(crate) total_turn_weight: i32,
     pub(crate) max_dealt_hp_damage_weight: i32,
     pub(crate) received_hp_damage_weight: i32,
@@ -554,6 +569,14 @@ pub(crate) struct TutorialBattleCharacter {
     #[serde(default)]
     pub(crate) tag_ids: Vec<i32>,
     pub(crate) skills: Vec<TutorialCharacterSkill>,
+    #[serde(default)]
+    pub(crate) active_skills: Vec<TutorialCharacterSkill>,
+    #[serde(default)]
+    pub(crate) extra_skill_ids: Vec<i32>,
+    #[serde(default)]
+    pub(crate) support_ability_ids: Vec<i32>,
+    #[serde(default)]
+    pub(crate) can_use_battle_tool_mix: bool,
     pub(crate) ability_ids: Vec<i32>,
     #[serde(default)]
     pub(crate) evolved_ability_ids: Vec<i32>,
@@ -605,6 +628,14 @@ pub(crate) struct TutorialSkill {
     pub(crate) attack_attributes: Vec<i32>,
     pub(crate) skill_target_type: Option<i32>,
     pub(crate) effects: Vec<TutorialSkillEffect>,
+    #[serde(default)]
+    pub(crate) limit_count: Option<i32>,
+    #[serde(default)]
+    pub(crate) max_lamp: i32,
+    #[serde(default)]
+    pub(crate) require_command_value: bool,
+    #[serde(default)]
+    pub(crate) skill_destination: Option<i32>,
     #[serde(default = "default_state_change_application_rate")]
     pub(crate) state_change_application_rate: i32,
     #[serde(default)]
@@ -634,12 +665,21 @@ pub(crate) struct TutorialSkillEffect {
 pub(crate) struct TutorialAbility {
     pub(crate) id: i32,
     pub(crate) effects: Vec<TutorialSkillEffect>,
+    #[serde(default)]
+    pub(crate) burst_gauge_max: Option<i32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct TutorialEffect {
     pub(crate) id: i32,
     pub(crate) field_effect_id: Option<i32>,
+    pub(crate) summons_effect_id: Option<i32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct TutorialSummonsEffect {
+    pub(crate) id: i32,
+    pub(crate) enemies: Vec<TutorialWaveEnemy>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -836,6 +876,22 @@ pub(crate) struct ScoreRankDrops {
     pub(crate) rank: i32,
     pub(crate) reward_set_ids: Vec<i32>,
     pub(crate) drop_reward_set_ids: Vec<i32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct TutorialBattleToolMix {
+    pub(crate) id: i32,
+    pub(crate) rank: i32,
+    pub(crate) first_item_attack_attribute: i32,
+    pub(crate) second_item_attack_attribute: i32,
+    pub(crate) skill_id: i32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct TutorialShipTool {
+    pub(crate) id: i32,
+    pub(crate) skill_ids: Vec<i32>,
+    pub(crate) usage_counts: Vec<i32>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

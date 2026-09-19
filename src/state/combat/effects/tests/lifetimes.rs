@@ -4,6 +4,112 @@ use prost::Message;
 use std::path::Path;
 
 #[test]
+fn mirrored_received_damage_debuffs_keep_owner_specific_hit_counts() {
+    let rule = |effect_id, skill_id| {
+        rule_for(effect_id, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap()
+    };
+    for (skill_id, self_duration, target_duration) in [
+        (20002065, 3, 3),
+        (22000004, 1, 1),
+        (26002171, 3, 1),
+        (32005448, 3, 1),
+    ] {
+        let self_rule = rule(780010026, skill_id);
+        let target_rule = rule(780010030, skill_id);
+        assert_eq!(
+            (
+                self_rule.target.as_str(),
+                &self_rule.expiry,
+                self_rule.duration,
+                self_rule.summary,
+            ),
+            ("self", &Expiry::Attacked, self_duration, 11)
+        );
+        assert_eq!(
+            (
+                target_rule.target.as_str(),
+                &target_rule.expiry,
+                target_rule.duration,
+                target_rule.summary,
+            ),
+            ("targets", &Expiry::Attacked, target_duration, 11)
+        );
+    }
+    assert!(rule_for(780010026, "active", "skill", 20000092)
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn compound_evasion_skills_bind_only_the_evasion_effect() {
+    for (effect_id, skill_id, target) in
+        [(91001209, 12002705, "self"), (91001674, 14002500, "allies")]
+    {
+        let rule = rule_for(effect_id, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                rule.operation.as_str(),
+                rule.target.as_str(),
+                &rule.expiry,
+                rule.duration,
+            ),
+            ("evasion", target, &Expiry::Attacked, 1)
+        );
+    }
+    for (effect_id, skill_id) in [
+        (91001671, 12002705),
+        (91001694, 12002705),
+        (91001699, 12002705),
+        (91001700, 12002705),
+        (91001701, 14002500),
+    ] {
+        if let Some(rule) = rule_for(effect_id, "active", "skill", skill_id).unwrap() {
+            assert_ne!(rule.operation, "evasion");
+        }
+    }
+}
+
+#[test]
+fn evasion_rules_preserve_inherited_and_filtered_recipients() {
+    let inherited = rule_for(91001696, "active", "skill", 12003150)
+        .unwrap()
+        .unwrap();
+    assert_eq!(inherited.target, "self");
+
+    let filtered = rule_for(91001696, "active", "skill", 14003793)
+        .unwrap()
+        .unwrap();
+    assert_eq!(filtered.target, "allies");
+    assert!(filtered.include_source);
+    assert!(!filtered.target_character_ids.is_empty());
+
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let member = |member_id, member_type, character_id| {
+        let mut member = empty_message(&proto, "blend.model.BattleMember").unwrap();
+        member.set_field_by_name("member_id", Value::I32(member_id));
+        member.set_field_by_name("type", Value::EnumNumber(member_type));
+        let mut ally = empty_message(&proto, "blend.model.BattleAlly").unwrap();
+        ally.set_field_by_name("character_id", Value::I32(character_id));
+        member.set_field_by_name("ally", Value::Message(ally));
+        member
+    };
+    let source = member(1, 0, -1);
+    let defender = member(2, 0, filtered.target_character_ids[0]);
+    let other = member(3, 0, -2);
+    assert!(selected(filtered, &source, &source, &[]));
+    assert!(selected(filtered, &source, &defender, &[]));
+    assert!(!selected(filtered, &source, &other, &[]));
+}
+
+#[test]
 fn combat_effects_persist_expire_and_preserve_conditional_passives() {
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),

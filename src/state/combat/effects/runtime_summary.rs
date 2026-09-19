@@ -1,28 +1,37 @@
-use super::registry::registry;
+use super::registry::{rule_for, rule_for_occurrence};
 use super::runtime::Runtime;
+use super::runtime_lamp::lamp_condition_matches;
 use super::runtime_match::{
-    amount, context_matches, contextual_recipient, contextual_rule, target_condition,
+    amount, condition, context_matches, contextual_recipient, contextual_rule, opponent_condition,
+    opponent_contextual_rule, selected, target_condition,
 };
 use crate::state::combat::prelude::*;
 
-pub(crate) fn timeline_slots(effect: &TutorialSkillEffect) -> Result<Option<usize>, StateError> {
-    let Some(rule) = registry()?
-        .rules
-        .iter()
-        .find(|rule| rule.id == effect.id && rule.operation == "timeline_shift")
-    else {
+pub(crate) fn timeline_slots(
+    source: &DynamicMessage,
+    target: &DynamicMessage,
+    skill_id: i32,
+    effect: &TutorialSkillEffect,
+    targets: &[i32],
+) -> Result<Option<i32>, StateError> {
+    let Some(rule) = rule_for(effect.id, "active", "skill", skill_id)? else {
         return Ok(None);
     };
+    if rule.operation != "timeline_shift"
+        || !selected(rule, source, target, targets)
+        || !condition(rule, source)
+        || !lamp_condition_matches(source, skill_id, rule)?
+    {
+        return Ok(None);
+    }
     let value = amount(rule, effect.value)?;
-    if value <= 0 || value % 100 != 0 {
+    if value == 0 || value % 100 != 0 {
         return Err(StateError::MasterData(format!(
             "invalid timeline shift for effect {}",
             effect.id
         )));
     }
-    Ok(Some(
-        usize::try_from(value / 100).map_err(|_| StateError::InvalidRequest)?,
-    ))
+    Ok(Some(value / 100))
 }
 
 pub(crate) fn instant_summary(
@@ -31,28 +40,73 @@ pub(crate) fn instant_summary(
     critical: bool,
     summary: i32,
 ) -> Result<i64, StateError> {
+    instant_summary_for_source(None, skill, target, critical, summary)
+}
+
+pub(crate) fn instant_summary_for_source(
+    source: Option<&DynamicMessage>,
+    skill: &TutorialSkill,
+    target: &DynamicMessage,
+    critical: bool,
+    summary: i32,
+) -> Result<i64, StateError> {
     let weak = target_resistance(target, preferred_attack_attribute(target, skill)?)? < 0;
-    skill.effects.iter().try_fold(0i64, |total, effect| {
-        let Some(rule) = registry()?.rules.iter().find(|rule| {
-            rule.id == effect.id
-                && rule.mode == "instant"
-                && rule.operation == "summary"
-                && rule.summary == summary
-        }) else {
-            return Ok(total);
+    skill
+        .effects
+        .iter()
+        .enumerate()
+        .try_fold(0i64, |total, (index, effect)| {
+            if rule_for_occurrence(effect.id, "catalog", "skill", skill.id, Some(index))?.is_some()
+            {
+                return Ok(total);
+            }
+            let Some(rule) =
+                rule_for_occurrence(effect.id, "instant", "skill", skill.id, Some(index))?
+            else {
+                return Ok(total);
+            };
+            if rule.operation != "summary" || rule.summary != summary {
+                return Ok(total);
+            }
+            if (rule.weak_only && !weak)
+                || (rule.target_broken
+                    && !member_status(target, "enemy")
+                        .ok()
+                        .is_some_and(|enemy| bool_field(&enemy, "is_broken")))
+                || !target_condition(rule, target)
+                || source.map_or(!rule.source_state_ids.is_empty(), |member| {
+                    !condition(rule, member)
+                })
+                || !context_matches(rule, 0, skill, critical)
+                || (rule.condition.contains_key("skill_lamp_full")
+                    && source.is_none_or(|member| {
+                        !lamp_condition_matches(member, skill.id, rule).unwrap_or(false)
+                    }))
+            {
+                return Ok(total);
+            }
+            Ok(total.saturating_add(i64::from(amount(rule, effect.value)?)))
+        })
+}
+
+pub(crate) fn instant_break_gauge_zero(
+    skill: &TutorialSkill,
+    target: &DynamicMessage,
+) -> Result<bool, StateError> {
+    for effect in &skill.effects {
+        let Some(rule) = rule_for(effect.id, "instant", "skill", skill.id)? else {
+            continue;
         };
-        if (rule.weak_only && !weak)
-            || (rule.target_broken
-                && !member_status(target, "enemy")
-                    .ok()
-                    .is_some_and(|enemy| bool_field(&enemy, "is_broken")))
-            || !target_condition(rule, target)
-            || !context_matches(rule, 0, skill, critical)
+        if rule.operation == "break_gauge_zero"
+            && (!rule.weak_only
+                || target_resistance(target, preferred_attack_attribute(target, skill)?)? < 0)
+            && target_condition(rule, target)
+            && context_matches(rule, 0, skill, false)
         {
-            return Ok(total);
+            return Ok(true);
         }
-        Ok(total.saturating_add(i64::from(amount(rule, effect.value)?)))
-    })
+    }
+    Ok(false)
 }
 
 impl Runtime {
@@ -63,7 +117,22 @@ impl Runtime {
         critical: bool,
         summary: i32,
     ) -> i64 {
-        let passive = self
+        self.contextual_summary_against(target, None, skill, critical, summary)
+    }
+
+    pub(crate) fn contextual_summary_against(
+        &self,
+        recipient: &DynamicMessage,
+        opponent: Option<&DynamicMessage>,
+        skill: &TutorialSkill,
+        critical: bool,
+        summary: i32,
+    ) -> i64 {
+        let passive = if summary == 1 {
+            self.lamp_skill_damage(recipient)
+        } else {
+            0
+        } + self
             .passives
             .iter()
             .filter(|passive| {
@@ -71,13 +140,29 @@ impl Runtime {
                     && passive.rule.summary == summary
                     && passive.rule.trigger.is_none()
                     && contextual_rule(&passive.rule)
-                    && contextual_recipient(passive, target)
+                    && contextual_recipient(passive, recipient)
+                    && (!opponent_contextual_rule(&passive.rule)
+                        || opponent.is_some_and(|target| opponent_condition(&passive.rule, target)))
+                    && (!passive.rule.weak_only
+                        || opponent.is_some_and(|target| {
+                            preferred_attack_attribute(target, skill)
+                                .and_then(|attribute| target_resistance(target, attribute))
+                                .is_ok_and(|resistance| resistance < 0)
+                        }))
+                    && (passive.rule.condition.get("target_state_id").is_none()
+                        || opponent.is_some_and(|target| target_condition(&passive.rule, target)))
+                    && (!passive.rule.target_broken
+                        || opponent.is_some_and(|target| {
+                            member_status(target, "enemy")
+                                .ok()
+                                .is_some_and(|enemy| bool_field(&enemy, "is_broken"))
+                        }))
                     && context_matches(&passive.rule, passive.source_character_id, skill, critical)
             })
             .fold(0i64, |total, passive| {
                 total.saturating_add(i64::from(passive.value))
             });
-        let target_id = i32_field(target, "member_id").unwrap_or_default();
+        let target_id = i32_field(recipient, "member_id").unwrap_or_default();
         self.instances
             .iter()
             .filter(|instance| {
@@ -86,6 +171,15 @@ impl Runtime {
                     && instance.rule.summary == summary
                     && contextual_rule(&instance.rule)
                     && instance.rule.trigger.is_none()
+                    && (!opponent_contextual_rule(&instance.rule)
+                        || opponent
+                            .is_some_and(|target| opponent_condition(&instance.rule, target)))
+                    && (!instance.rule.weak_only
+                        || opponent.is_some_and(|target| {
+                            preferred_attack_attribute(target, skill)
+                                .and_then(|attribute| target_resistance(target, attribute))
+                                .is_ok_and(|resistance| resistance < 0)
+                        }))
                     && context_matches(
                         &instance.rule,
                         instance.source_character_id,

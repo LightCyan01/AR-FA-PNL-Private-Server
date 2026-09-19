@@ -1,7 +1,15 @@
 use super::registry::Expiry;
 use super::runtime::{Instance, Runtime};
-use super::runtime_match::{condition, context_matches, selected};
-use super::runtime_results::{effect_result, turn_state_change_result};
+use super::runtime_lamp::{heal_all, heal_self};
+use super::runtime_match::{
+    condition, context_matches, selected_for_source_character, state_application_blocked,
+};
+use super::runtime_panel::scale_panel_value;
+use super::runtime_resources::{
+    add_party_gauge, apply_burst_gauge_passive, apply_party_gauge_passive,
+};
+use super::runtime_results::{effect_result, status_effect_result, turn_state_change_result};
+use super::runtime_targeting::resolved_targets;
 use crate::state::combat::prelude::*;
 use std::collections::BTreeSet;
 
@@ -10,6 +18,14 @@ impl Runtime {
         (self.pending_actor == actor)
             .then_some(self.pending_blind_rate)
             .unwrap_or_default()
+    }
+
+    pub(crate) fn evasion_rate(&self, target: i32) -> i32 {
+        self.instances
+            .iter()
+            .filter(|instance| instance.target == target && instance.rule.operation == "evasion")
+            .fold(0i32, |total, instance| total.saturating_add(instance.value))
+            .clamp(0, 10_000)
     }
 
     pub(crate) fn provocation_target(&self, actor: i32) -> Option<i32> {
@@ -58,7 +74,7 @@ impl Runtime {
             let remaining = i32_field(&change, "rest_count").unwrap_or_default();
             let handled = matches!(
                 state_id,
-                910037 | 940001 | 940002 | 940005 | 940006 | 940007
+                910037 | 910059 | 940001 | 940002 | 940005 | 940006 | 940007
             );
             if state_id == 910037 {
                 let heal = if value > 0 {
@@ -82,6 +98,11 @@ impl Runtime {
                     .max(0);
                 results.push(turn_state_change_result(
                     proto, actor, state_id, damage, 0, false,
+                )?);
+            } else if state_id == 910059 {
+                disabled = true;
+                results.push(turn_state_change_result(
+                    proto, actor, state_id, 0, 0, true,
                 )?);
             } else if state_id == 940005 {
                 if deterministic_roll(
@@ -120,6 +141,14 @@ impl Runtime {
         members[actor_index].set_field_by_name("hp", Value::I32(hp));
         members[actor_index].set_field_by_name("is_alive", Value::Bool(!killed));
         members[actor_index].set_field_by_name(
+            "is_stun",
+            Value::Bool(
+                retained
+                    .iter()
+                    .any(|change| i32_field(change, "state_change_id") == Some(910059)),
+            ),
+        );
+        members[actor_index].set_field_by_name(
             "state_changes",
             Value::List(retained.into_iter().map(Value::Message).collect()),
         );
@@ -127,6 +156,16 @@ impl Runtime {
             "members",
             Value::List(members.into_iter().map(Value::Message).collect()),
         );
+        let mut applied = BTreeSet::new();
+        for passive in self.passives.iter().filter(|passive| {
+            passive.source == actor
+                && passive.rule.operation == "party_gauge"
+                && passive.rule.trigger.as_deref() == Some("turn_start")
+        }) {
+            if applied.insert((passive.rule.owner_id, passive.rule.id)) {
+                results.push(apply_party_gauge_passive(proto, state, passive)?);
+            }
+        }
         self.pending_actor = actor;
         self.pending_blind_rate = blind_rate.clamp(0, 10_000);
         self.pending_provocation_target = provocation_target;
@@ -148,16 +187,41 @@ impl Runtime {
         consumes_turn: bool,
         attack: bool,
     ) {
+        self.expire_with_attributes(actor, results, consumes_turn, attack, &[]);
+    }
+
+    pub(crate) fn expire_with_attributes(
+        &mut self,
+        actor: i32,
+        results: &[DynamicMessage],
+        consumes_turn: bool,
+        attack: bool,
+        attack_attributes: &[i32],
+    ) {
         let hits: BTreeSet<_> = results
             .iter()
             .filter(|r| attack && !bool_field(r, "is_miss") && !bool_field(r, "is_invalid"))
             .filter_map(|r| i32_field(r, "target_id"))
             .collect();
+        let attacked: BTreeSet<_> = results
+            .iter()
+            .filter(|result| attack && !bool_field(result, "is_invalid"))
+            .filter_map(|result| i32_field(result, "target_id"))
+            .collect();
         for instance in &mut self.instances {
+            let matching_attribute = instance.rule.attack_attributes.is_empty()
+                || attack_attributes.is_empty()
+                || instance
+                    .rule
+                    .attack_attributes
+                    .iter()
+                    .any(|attribute| attack_attributes.contains(attribute));
             let tick = match instance.rule.expiry {
                 Expiry::Turn => consumes_turn && instance.target == actor,
                 Expiry::Attack => attack && consumes_turn && instance.target == actor,
-                Expiry::Hit => hits.contains(&instance.target),
+                Expiry::Hit => matching_attribute && hits.contains(&instance.target),
+                Expiry::Attacked => matching_attribute && attacked.contains(&instance.target),
+                Expiry::Negative => false,
                 Expiry::Permanent => false,
             };
             if tick && instance.remaining > 0 {
@@ -175,6 +239,8 @@ impl Runtime {
 
     pub(crate) fn acquire_current_panel(
         &mut self,
+        proto: &ProtoRegistry,
+        rules: &TutorialRules,
         state: &mut DynamicMessage,
     ) -> Result<(), StateError> {
         if current_battle_status(state)? != BATTLE_STATUS_IN_BATTLE {
@@ -190,15 +256,39 @@ impl Runtime {
         }
         self.acquired_panel_wave = wave;
         self.acquired_panel_turn = turn;
+        let actor_id = member_id(&current_actor(state)?)?;
+        let panel_rate = self.panel_effect_rate(state)?;
+        self.trigger_panel_lamps(state, actor_id)?;
+        let mut applied = BTreeSet::new();
+        for passive in self.passives.iter().filter(|passive| {
+            passive.source == actor_id && passive.rule.trigger.as_deref() == Some("panel_acquired")
+        }) {
+            if !applied.insert((passive.source, passive.rule.owner_id, passive.rule.id)) {
+                continue;
+            }
+            match passive.rule.operation.as_str() {
+                "party_gauge" => {
+                    add_party_gauge(state, passive.value)?;
+                }
+                "burst_gauge" => {
+                    apply_burst_gauge_passive(proto, rules, state, passive)?;
+                }
+                _ => return Err(StateError::InvalidRequest),
+            }
+        }
         let actor_type = member_type(&current_actor(state)?)?;
-        let panel_id = effective_battle_panel_id(state);
+        let panel_id = self.effective_panel_id(state)?;
         let mut members = message_list(state, "members");
         for member in members.iter_mut().filter(|member| {
             member_type(member).ok() == Some(actor_type) && bool_field(member, "is_alive")
         }) {
             let id = member_id(member)?;
             if matches!(panel_id, 33 | 36) {
-                let delta = if panel_id == 33 { -4_000 } else { 4_000 };
+                let delta = if panel_id == 33 {
+                    -scale_panel_value(4_000, panel_rate)
+                } else {
+                    4_000
+                };
                 self.panel_damage_taken
                     .entry(id)
                     .and_modify(|value| *value = value.saturating_add(delta))
@@ -206,8 +296,15 @@ impl Runtime {
             } else if panel_id == 42 {
                 let hp = i32_field(member, "hp").unwrap_or(0).max(0);
                 let max_hp = i32_field(member, "max_hp").unwrap_or(0).max(0);
-                member
-                    .set_field_by_name("hp", Value::I32(hp.saturating_add(max_hp / 4).min(max_hp)));
+                let rate = i64::from(scale_panel_value(2_500, panel_rate));
+                let heal = i64::from(max_hp).saturating_mul(rate) / 10_000;
+                member.set_field_by_name(
+                    "hp",
+                    Value::I32(
+                        hp.saturating_add(i32::try_from(heal).unwrap_or(i32::MAX))
+                            .min(max_hp),
+                    ),
+                );
             }
         }
         state.set_field_by_name(
@@ -220,28 +317,281 @@ impl Runtime {
     pub(crate) fn trigger_attack_after(
         &mut self,
         proto: &ProtoRegistry,
+        rules: &TutorialRules,
         state: &mut DynamicMessage,
         source_id: i32,
         skill: &TutorialSkill,
         results: &[DynamicMessage],
     ) -> Result<Vec<DynamicMessage>, StateError> {
-        if skill.skill_effect_type != 1 {
-            return Ok(Vec::new());
-        }
         let members = message_list(state, "members");
         let source = members
             .iter()
             .find(|member| i32_field(member, "member_id") == Some(source_id))
             .ok_or(StateError::InvalidRequest)?;
-        let source_character_id =
-            message_i32_field(source, "ally", "character_id").unwrap_or_default();
-        let hit_results = results
-            .iter()
-            .filter(|result| !bool_field(result, "is_miss") && !bool_field(result, "is_invalid"));
+        let source_type = member_type(source)?;
         let mut triggered = Vec::new();
-        for passive in self.passives.clone().into_iter().filter(|passive| {
-            passive.source == source_id && passive.rule.trigger.as_deref() == Some("attack_after")
+        let mut applied = BTreeSet::new();
+        let passives = self.passives.clone();
+        for passive in passives
+            .iter()
+            .filter(|passive| match passive.rule.trigger.as_deref() {
+                Some("action_after") => match passive.rule.target.as_str() {
+                    "self" => passive.source == source_id,
+                    "allies" => passive.source_type == source_type,
+                    _ => false,
+                },
+                Some("party_action_after") => passive.source_type == source_type,
+                _ => false,
+            })
+        {
+            if matches!(
+                passive.rule.operation.as_str(),
+                "party_gauge" | "burst_gauge"
+            ) && !applied.insert((passive.source, passive.rule.owner_id, passive.rule.id))
+            {
+                continue;
+            }
+            match passive.rule.operation.as_str() {
+                "bomb_gauge" => {
+                    let maximum = rules.constants.max_bomb_gauge;
+                    let current = i32_field(state, "bomb_gauge").unwrap_or_default().max(0);
+                    let delta =
+                        i64::from(maximum).saturating_mul(i64::from(passive.value)) / 10_000;
+                    let next = i64::from(current)
+                        .saturating_add(delta)
+                        .clamp(0, i64::from(maximum)) as i32;
+                    state.set_field_by_name("bomb_gauge", Value::I32(next));
+                    let mut result = effect_result(
+                        proto,
+                        passive.rule.id,
+                        passive.source,
+                        source_id,
+                        false,
+                        &passive.rule,
+                        passive.value,
+                    )?;
+                    result.set_field_by_name(
+                        "add_bomb_gauge",
+                        Value::Message(wrapper_i32(proto, next - current)?),
+                    );
+                    triggered.push(result);
+                }
+                "heal" => triggered.extend(heal_all(
+                    proto,
+                    state,
+                    passive.source,
+                    passive.rule.id,
+                    passive.value,
+                )?),
+                "party_gauge" => triggered.push(apply_party_gauge_passive(proto, state, &passive)?),
+                "burst_gauge" => {
+                    triggered.push(apply_burst_gauge_passive(proto, rules, state, &passive)?)
+                }
+                _ => return Err(StateError::InvalidRequest),
+            }
+        }
+        let attacking = skill.skill_effect_type == 1;
+        let hit_results = results.iter().filter(|result| {
+            attacking && !bool_field(result, "is_miss") && !bool_field(result, "is_invalid")
+        });
+        let attacked = hit_results
+            .clone()
+            .filter_map(|result| i32_field(result, "target_id"))
+            .collect::<BTreeSet<_>>();
+        let mut applied_attacked = BTreeSet::new();
+        for passive in passives.iter().filter(|passive| {
+            passive.rule.operation == "heal"
+                && passive.rule.trigger.as_deref() == Some("attacked")
+                && attacked.contains(&passive.source)
         }) {
+            let Some(target) = members
+                .iter()
+                .find(|member| member_id(member).ok() == Some(passive.source))
+            else {
+                continue;
+            };
+            if !bool_field(target, "is_alive")
+                || (!passive.rule.source_character_ids.is_empty()
+                    && !passive
+                        .rule
+                        .source_character_ids
+                        .contains(&passive.source_character_id))
+                || !condition(&passive.rule, target)
+                || !applied_attacked.insert((
+                    passive.source,
+                    passive.rule.owner_id,
+                    passive.rule.id,
+                ))
+            {
+                continue;
+            }
+            let uses = self
+                .limited_effect_uses
+                .entry(passive.source)
+                .or_default()
+                .entry(passive.rule.owner_id)
+                .or_default();
+            if passive.rule.trigger_limit > 0 && *uses >= passive.rule.trigger_limit {
+                continue;
+            }
+            triggered.extend(heal_self(
+                proto,
+                state,
+                passive.source,
+                passive.rule.id,
+                passive.value,
+            )?);
+            *uses = uses.checked_add(1).ok_or(StateError::InvalidRequest)?;
+        }
+        for passive in passives.iter().filter(|passive| {
+            passive.rule.target == "enemies"
+                && passive.rule.trigger.as_deref() == Some("attacked")
+                && attacked.contains(&passive.source)
+        }) {
+            let Some(passive_source) = members
+                .iter()
+                .find(|member| member_id(member).ok() == Some(passive.source))
+            else {
+                continue;
+            };
+            if !bool_field(passive_source, "is_alive")
+                || (!passive.rule.source_character_ids.is_empty()
+                    && !passive
+                        .rule
+                        .source_character_ids
+                        .contains(&passive.source_character_id))
+                || !condition(&passive.rule, passive_source)
+            {
+                continue;
+            }
+            let target_ids = members
+                .iter()
+                .filter(|member| {
+                    bool_field(member, "is_alive")
+                        && member_type(member)
+                            .ok()
+                            .is_some_and(|kind| kind != passive.source_type)
+                })
+                .filter_map(|member| member_id(member).ok())
+                .collect::<Vec<_>>();
+            triggered.extend(self.grant_triggered_modifier(
+                proto,
+                passive,
+                passive_source,
+                &members,
+                &target_ids,
+            )?);
+        }
+        let critical = hit_results
+            .clone()
+            .any(|result| bool_field(result, "is_critical"));
+        let mut refreshed_self = BTreeSet::new();
+        for passive in passives.iter().filter(|passive| {
+            passive.source == source_id
+                && (passive.rule.trigger.as_deref() == Some("skill_after")
+                    || (attacking && passive.rule.trigger.as_deref() == Some("attack_after")))
+        }) {
+            if passive.rule.operation == "heal" {
+                if bool_field(source, "is_alive")
+                    && context_matches(&passive.rule, passive.source_character_id, skill, false)
+                    && condition(&passive.rule, source)
+                {
+                    triggered.extend(heal_self(
+                        proto,
+                        state,
+                        source_id,
+                        passive.rule.id,
+                        passive.value,
+                    )?);
+                }
+                continue;
+            }
+            if passive.rule.target == "self" {
+                if !bool_field(source, "is_alive")
+                    || !context_matches(&passive.rule, passive.source_character_id, skill, critical)
+                    || !condition(&passive.rule, source)
+                {
+                    continue;
+                }
+                if state_application_blocked(source, &passive.rule)? {
+                    triggered.push(status_effect_result(
+                        proto,
+                        passive.rule.id,
+                        source_id,
+                        source_id,
+                        true,
+                        &passive.rule,
+                        passive.value,
+                        4,
+                    )?);
+                    continue;
+                }
+                if refreshed_self.insert((source_id, passive.rule.id)) {
+                    self.instances.retain(|instance| {
+                        !(instance.source == source_id
+                            && instance.target == source_id
+                            && instance.rule.id == passive.rule.id
+                            && instance.rule.trigger.as_deref() == Some("attack_after"))
+                    });
+                }
+                self.instances.push(Instance {
+                    source: source_id,
+                    source_character_id: passive.source_character_id,
+                    target: source_id,
+                    value: passive.value,
+                    remaining: passive.rule.duration,
+                    rule: passive.rule.clone(),
+                });
+                self.managed
+                    .entry(source_id)
+                    .or_default()
+                    .insert(passive.rule.state_id);
+                triggered.push(effect_result(
+                    proto,
+                    passive.rule.id,
+                    source_id,
+                    source_id,
+                    true,
+                    &passive.rule,
+                    passive.value,
+                )?);
+                continue;
+            }
+            if matches!(
+                passive.rule.target.as_str(),
+                "allies" | "enemies" | "highest_attack_ally" | "highest_magic_ally"
+            ) {
+                if !bool_field(source, "is_alive")
+                    || (!passive.rule.source_character_ids.is_empty()
+                        && !passive
+                            .rule
+                            .source_character_ids
+                            .contains(&passive.source_character_id))
+                    || !condition(&passive.rule, source)
+                {
+                    continue;
+                }
+                let requested = members
+                    .iter()
+                    .filter(|member| {
+                        bool_field(member, "is_alive")
+                            && member_type(member).ok().is_some_and(|member_type| {
+                                (passive.rule.target == "enemies") == (member_type != source_type)
+                            })
+                    })
+                    .filter_map(|member| member_id(member).ok())
+                    .collect::<Vec<_>>();
+                let target_ids =
+                    resolved_targets(&passive.rule, source, &members, None, &requested)?;
+                triggered.extend(self.grant_triggered_modifier(
+                    proto,
+                    passive,
+                    source,
+                    &members,
+                    &target_ids,
+                )?);
+                continue;
+            }
             for result in hit_results.clone() {
                 let Some(target_id) = i32_field(result, "target_id") else {
                     continue;
@@ -255,11 +605,17 @@ impl Runtime {
                 if !bool_field(target, "is_alive")
                     || !context_matches(
                         &passive.rule,
-                        source_character_id,
+                        passive.source_character_id,
                         skill,
                         bool_field(result, "is_critical"),
                     )
-                    || !selected(&passive.rule, source, target, &[target_id])
+                    || !selected_for_source_character(
+                        &passive.rule,
+                        source,
+                        passive.source_character_id,
+                        target,
+                        &[target_id],
+                    )
                     || !condition(&passive.rule, source)
                 {
                     continue;
@@ -271,7 +627,7 @@ impl Runtime {
                 });
                 self.instances.push(Instance {
                     source: source_id,
-                    source_character_id,
+                    source_character_id: passive.source_character_id,
                     target: target_id,
                     value: passive.value,
                     remaining: passive.rule.duration,
@@ -291,6 +647,11 @@ impl Runtime {
                     passive.value,
                 )?);
             }
+        }
+        if attacking {
+            triggered.extend(
+                self.apply_critical_skill_effects(proto, rules, state, source_id, skill, results)?,
+            );
         }
         self.refresh(proto, state)?;
         Ok(triggered)
