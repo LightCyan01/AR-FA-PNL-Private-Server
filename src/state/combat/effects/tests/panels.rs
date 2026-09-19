@@ -77,6 +77,23 @@ fn tagged_ally_and_target_panel_rules_split_recipients() {
 }
 
 #[test]
+fn healing_panel_aliases_preserve_the_next_non_burst_limit() {
+    for skill_id in [
+        22000934, 22000939, 22000944, 22001434, 26002071, 26002339, 32001101,
+        32001178, 32002195, 32005633,
+    ] {
+        let rule = rule_for(71190007, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (rule.target.as_str(), rule.panel_to_id, rule.panel_limit),
+            ("self", 42, 1)
+        );
+        assert!(!rule.panel_from_ids.contains(&14));
+    }
+}
+
+#[test]
 fn broken_target_panel_conversion_waits_for_break_and_runs_after_attack() {
     for skill_id in (12002643..=12002647)
         .chain(12002664..=12002668)
