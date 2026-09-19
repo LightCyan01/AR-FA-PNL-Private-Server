@@ -325,8 +325,17 @@ fn incoming_damage_effects_follow_master_lifetimes_and_break_policy() {
         .into_iter()
         .find(|member| i32_field(member, "member_id") == Some(1))
         .unwrap();
-    let before =
-        policy_break_damage(&source, &target, &skill, Some(&runtime), 100, false, 10_000).unwrap();
+    let before = policy_break_damage(
+        &source,
+        &target,
+        &skill,
+        Some(&runtime),
+        None,
+        100,
+        false,
+        10_000,
+    )
+    .unwrap();
     let critical_skill = TutorialSkill {
         id: 11003048,
         effects: vec![TutorialSkillEffect {
@@ -341,6 +350,7 @@ fn incoming_damage_effects_follow_master_lifetimes_and_break_policy() {
             &target,
             &critical_skill,
             Some(&runtime),
+            None,
             100,
             true,
             10_000,
@@ -351,6 +361,7 @@ fn incoming_damage_effects_follow_master_lifetimes_and_break_policy() {
                 &target,
                 &critical_skill,
                 Some(&runtime),
+                None,
                 100,
                 false,
                 10_000,
@@ -388,7 +399,17 @@ fn incoming_damage_effects_follow_master_lifetimes_and_break_policy() {
         .unwrap();
     assert_eq!(state_change_summary_value(target, 13), 3_000);
     assert!(
-        policy_break_damage(source, target, &skill, Some(&runtime), 100, false, 10_000).unwrap()
+        policy_break_damage(
+            source,
+            target,
+            &skill,
+            Some(&runtime),
+            None,
+            100,
+            false,
+            10_000,
+        )
+        .unwrap()
             > before
     );
     runtime

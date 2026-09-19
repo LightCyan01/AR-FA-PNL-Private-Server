@@ -469,8 +469,18 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                 || (r.operation == "skill_damage_scale"
                     && (r.mode != "instant"
                         || !matches!(r.summary, 1 | 3 | 7)
-                        || !matches!(r.scale_by.as_str(), "opponent_count" | "source_hp")
-                        || (r.summary == 3 && r.scale_by != "source_hp")
+                        || !matches!(
+                            r.scale_by.as_str(),
+                            "opponent_count" | "source_hp" | "party_tag_count"
+                        )
+                        || (r.summary == 3
+                            && !matches!(r.scale_by.as_str(), "source_hp" | "party_tag_count"))
+                        || (r.scale_by == "party_tag_count"
+                            && (r.summary != 3
+                                || r.scale_input_min == 0
+                                || r.condition
+                                    .get("party_tag_id")
+                                    .is_none_or(|id| *id <= 0)))
                         || r.scale_input_min < 0
                         || r.scale_input_max < r.scale_input_min
                         || r.fixed.is_some_and(|minimum| {

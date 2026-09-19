@@ -158,7 +158,7 @@ fn skill_damage_curves_follow_live_count_hp_and_direction() {
         0
     );
     assert_eq!(
-        scaled_break_damage(skill(11003617), &source).unwrap(),
+        scaled_break_damage(skill(11003617), &source, None).unwrap(),
         1_000
     );
 
@@ -227,7 +227,7 @@ fn skill_damage_curves_follow_live_count_hp_and_direction() {
         15_000
     );
     assert_eq!(
-        scaled_break_damage(skill(11003617), &source).unwrap(),
+        scaled_break_damage(skill(11003617), &source, None).unwrap(),
         4_000
     );
     assert_eq!(
@@ -386,6 +386,35 @@ fn received_damage_buffs_scale_with_tagged_party_members() {
                 rule.fixed.unwrap(),
             )
             .unwrap(),
+            expected
+        );
+    }
+
+    let break_rule = rule_for(91002103, "instant", "skill", 12003393)
+        .unwrap()
+        .unwrap();
+    let break_tag_id = break_rule.condition["party_tag_id"];
+    let break_tagged = rules
+        .battle_characters
+        .iter()
+        .filter(|character| character.tag_ids.contains(&break_tag_id))
+        .map(|character| character.id)
+        .collect::<Vec<_>>();
+    assert!(break_tagged.len() >= 4);
+    let skill = rules
+        .skills
+        .iter()
+        .find(|skill| skill.id == 12003393)
+        .unwrap();
+    for (count, expected) in [(1, 2_500), (4, 10_000)] {
+        let members = break_tagged
+            .iter()
+            .take(count)
+            .enumerate()
+            .map(|(index, character_id)| member(index as i32 + 1, *character_id, 0))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            scaled_break_damage(skill, &members[0], Some((&rules, &members))).unwrap(),
             expected
         );
     }

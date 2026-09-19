@@ -6,14 +6,15 @@ pub(crate) fn scaled_skill_damage(
     source: &DynamicMessage,
     opponent_count: i32,
 ) -> Result<i64, StateError> {
-    scaled_skill_modifier(skill, source, opponent_count, 1)
+    scaled_skill_modifier(skill, source, opponent_count, 1, None)
 }
 
 pub(crate) fn scaled_break_damage(
     skill: &TutorialSkill,
     source: &DynamicMessage,
+    party_context: Option<(&TutorialRules, &[DynamicMessage])>,
 ) -> Result<i64, StateError> {
-    scaled_skill_modifier(skill, source, 0, 3)
+    scaled_skill_modifier(skill, source, 0, 3, party_context)
 }
 
 pub(crate) fn scaled_critical_damage(
@@ -21,7 +22,7 @@ pub(crate) fn scaled_critical_damage(
     source: &DynamicMessage,
     opponent_count: i32,
 ) -> Result<i64, StateError> {
-    scaled_skill_modifier(skill, source, opponent_count, 7)
+    scaled_skill_modifier(skill, source, opponent_count, 7, None)
 }
 
 pub(super) fn party_tag_count(
@@ -77,6 +78,7 @@ fn scaled_skill_modifier(
     source: &DynamicMessage,
     opponent_count: i32,
     summary: i32,
+    party_context: Option<(&TutorialRules, &[DynamicMessage])>,
 ) -> Result<i64, StateError> {
     skill.effects.iter().try_fold(0i64, |total, effect| {
         let Some(rule) = rule_for(effect.id, "instant", "skill", skill.id)? else {
@@ -96,6 +98,14 @@ fn scaled_skill_modifier(
         }
         let (input, denominator) = match rule.scale_by.as_str() {
             "opponent_count" => (i64::from(opponent_count), 1),
+            "party_tag_count" => {
+                let (rules, members) = party_context.ok_or(StateError::InvalidRequest)?;
+                let tag_id = *rule
+                    .condition
+                    .get("party_tag_id")
+                    .ok_or(StateError::InvalidRequest)?;
+                (i64::from(party_tag_count(rules, members, source, tag_id)?), 1)
+            }
             "source_hp" => (
                 i64::from(i32_field(source, "hp").unwrap_or_default().max(0)) * 100,
                 i64::from(i32_field(source, "max_hp").unwrap_or(1).max(1)),

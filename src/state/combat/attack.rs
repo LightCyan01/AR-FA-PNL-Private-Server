@@ -342,6 +342,7 @@ pub(crate) fn apply_attack_results(
                 &members[target_index],
                 skill,
                 Some(runtime),
+                Some((rules, &members)),
                 break_panel,
                 critical,
                 variance,

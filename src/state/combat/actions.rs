@@ -500,13 +500,15 @@ fn build_character_selection_targets(
     resources: Option<&DynamicMessage>,
     runtime: Option<&effects::Runtime>,
 ) -> Result<(i32, Vec<Value>), StateError> {
-    let actor = message_list(state, "members")
-        .into_iter()
+    let members = message_list(state, "members");
+    let actor = members
+        .iter()
         .find(|member| i32_field(member, "member_id") == Some(actor_id))
+        .cloned()
         .ok_or(StateError::InvalidRequest)?;
     let actor_type = member_type(&actor)?;
     let opponent_count = i32::try_from(
-        message_list(state, "members")
+        members
             .iter()
             .filter(|member| {
                 bool_field(member, "is_alive") && member_type(member).ok() != Some(actor_type)
@@ -526,8 +528,8 @@ fn build_character_selection_targets(
         1
     };
     let provocation_target = runtime.and_then(|runtime| runtime.provocation_target(actor_id));
-    let targets = message_list(state, "members")
-        .into_iter()
+    let targets = members
+        .iter()
         .filter(|member| {
             (target_type == 6 || member_type(member).ok() == Some(target_member_type))
                 && (target_type != 1 || member_id(member).ok() == Some(actor_id))
@@ -536,6 +538,7 @@ fn build_character_selection_targets(
                         .is_none_or(|target| member_id(member).ok() == Some(target)))
                 && bool_field(member, "is_alive")
         })
+        .cloned()
         .collect::<Vec<_>>();
     let mut target_values = Vec::new();
     for target in targets {
@@ -590,7 +593,16 @@ fn build_character_selection_targets(
                 10_000,
             )?;
             let break_damage =
-                policy_break_damage(&actor, &target, skill, runtime, break_panel, false, 10_000)?;
+                policy_break_damage(
+                    &actor,
+                    &target,
+                    skill,
+                    runtime,
+                    Some((rules, &members)),
+                    break_panel,
+                    false,
+                    10_000,
+                )?;
             let attribute = preferred_attack_attribute(&target, skill)?;
             let resistance = target_resistance(&target, attribute)?;
             preview.set_field_by_name("hp_damage", Value::Message(wrapper_i64(proto, damage)?));

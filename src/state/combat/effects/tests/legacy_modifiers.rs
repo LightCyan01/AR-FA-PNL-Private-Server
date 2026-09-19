@@ -213,8 +213,17 @@ fn legacy_skill_modifiers_are_active_and_apply_to_their_real_recipients() {
         .iter()
         .find(|member| member_id(member).ok() == Some(enemy_id))
         .unwrap();
-    let baseline =
-        policy_break_damage(enemy, source, &skill, Some(&runtime), 100, false, 10_000).unwrap();
+    let baseline = policy_break_damage(
+        enemy,
+        source,
+        &skill,
+        Some(&runtime),
+        None,
+        100,
+        false,
+        10_000,
+    )
+    .unwrap();
 
     runtime
         .apply(
@@ -242,7 +251,17 @@ fn legacy_skill_modifiers_are_active_and_apply_to_their_real_recipients() {
         .unwrap();
     assert_eq!(state_change_summary_value(enemy, 3), -2_000);
     assert!(
-        policy_break_damage(enemy, source, &skill, Some(&runtime), 100, false, 10_000).unwrap()
+        policy_break_damage(
+            enemy,
+            source,
+            &skill,
+            Some(&runtime),
+            None,
+            100,
+            false,
+            10_000,
+        )
+        .unwrap()
             < baseline
     );
 

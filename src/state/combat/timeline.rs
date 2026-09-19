@@ -568,6 +568,7 @@ pub(crate) fn policy_break_damage(
     target: &DynamicMessage,
     skill: &TutorialSkill,
     runtime: Option<&effects::Runtime>,
+    party_context: Option<(&TutorialRules, &[DynamicMessage])>,
     panel_multiplier: i128,
     critical: bool,
     variance: u32,
@@ -595,7 +596,7 @@ pub(crate) fn policy_break_damage(
             runtime.contextual_summary_against(attacker, Some(target), skill, critical, 3)
         })
         + effects::instant_summary_for_source(Some(attacker), skill, target, critical, 3)?
-        + effects::scaled_break_damage(skill, attacker)?)
+        + effects::scaled_break_damage(skill, attacker, party_context)?)
     .clamp(0, 1_000_000);
     let incoming = (10_000i64
         + i64::from(state_change_summary_value(target, 13))
