@@ -153,6 +153,16 @@ impl Runtime {
             "members",
             Value::List(members.into_iter().map(Value::Message).collect()),
         );
+        let mut applied = BTreeSet::new();
+        for passive in self.passives.iter().filter(|passive| {
+            passive.source == actor
+                && passive.rule.operation == "party_gauge"
+                && passive.rule.trigger.as_deref() == Some("turn_start")
+        }) {
+            if applied.insert((passive.rule.owner_id, passive.rule.id)) {
+                results.push(apply_party_gauge_passive(proto, state, passive)?);
+            }
+        }
         self.pending_actor = actor;
         self.pending_blind_rate = blind_rate.clamp(0, 10_000);
         self.pending_provocation_target = provocation_target;

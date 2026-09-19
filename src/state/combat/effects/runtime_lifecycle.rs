@@ -2,7 +2,7 @@ use super::registry::{registry, rule_for_occurrence, Expiry, Rule};
 use super::runtime::{Baseline, Instance, NestedActionInstance, Passive, Runtime};
 use super::runtime_lamp::is_lamp_ability_effect;
 use super::runtime_match::{amount, condition, contextual_rule, selected_for_source_character};
-use super::runtime_resources::add_burst_gauge;
+use super::runtime_resources::{add_burst_gauge, add_party_gauge};
 use super::runtime_results::{display, level_display};
 use crate::state::combat::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
@@ -182,6 +182,9 @@ impl Runtime {
                     *value = value
                         .checked_add(passive.value)
                         .ok_or(StateError::InvalidRequest)?;
+                }
+                "party_gauge" => {
+                    add_party_gauge(state, passive.value)?;
                 }
                 "heal" => {
                     super::runtime_lamp::heal_all(

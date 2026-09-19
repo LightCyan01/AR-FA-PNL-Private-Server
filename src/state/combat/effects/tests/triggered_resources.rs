@@ -48,6 +48,29 @@ fn triggered_item_gauge_rules_follow_their_catalog_events() {
             ("panel_acquired", 3),
         ])
     );
+    assert_eq!(
+        catalog
+            .rules
+            .iter()
+            .filter(|rule| {
+                rule.id == 120000292
+                    && rule.mode == "passive"
+                    && rule.owner_type == "ability"
+                    && rule.trigger.as_deref() == Some("turn_start")
+            })
+            .count(),
+        10
+    );
+    assert!(catalog.rules.iter().any(|rule| {
+        rule.id == 120000243
+            && rule.owner_id == 600000282
+            && rule.trigger.as_deref() == Some("action_after")
+    }));
+    assert!(catalog.rules.iter().any(|rule| {
+        rule.id == 120000232
+            && rule.owner_id == 600000563
+            && rule.trigger.as_deref() == Some("battle_start")
+    }));
 
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -73,11 +96,11 @@ fn triggered_item_gauge_rules_follow_their_catalog_events() {
         .iter()
         .find(|skill| skill.skill_effect_type == 1)
         .unwrap();
-    let passive = |ability_id, owner_index, value| Passive {
+    let passive = |effect_id, ability_id, owner_index, value| Passive {
         source: actor_id,
         value,
         rule: rule_for_occurrence(
-            72001085,
+            effect_id,
             "passive",
             "ability",
             ability_id,
@@ -93,7 +116,7 @@ fn triggered_item_gauge_rules_follow_their_catalog_events() {
     let mut runtime = Runtime::default();
     runtime.prepare(&state, "triggered-item-gauge").unwrap();
 
-    runtime.passives = vec![passive(1990267, Some(0), 1_000)];
+    runtime.passives = vec![passive(72001085, 1990267, Some(0), 1_000)];
     state.set_field_by_name("party_gauge", Value::I32(0));
     let results = runtime
         .trigger_attack_after(&proto, &rules, &mut state, actor_id, skill, &[])
@@ -108,7 +131,7 @@ fn triggered_item_gauge_rules_follow_their_catalog_events() {
         &proto, actor_id, 1, 0, 0, 0, true, false, false, false, false, false, false,
     )
     .unwrap();
-    runtime.passives = vec![passive(1990208, Some(0), 500)];
+    runtime.passives = vec![passive(72001085, 1990208, Some(0), 500)];
     state.set_field_by_name("party_gauge", Value::I32(0));
     let before = state.clone();
     runtime
@@ -129,7 +152,7 @@ fn triggered_item_gauge_rules_follow_their_catalog_events() {
         &proto, actor_id, 0, 0, 1, 0, false, false, false, false, false, false, false,
     )
     .unwrap();
-    runtime.passives = vec![passive(1990368, Some(6), 200)];
+    runtime.passives = vec![passive(72001085, 1990368, Some(6), 200)];
     state.set_field_by_name("party_gauge", Value::I32(0));
     let before = state.clone();
     runtime
@@ -146,13 +169,29 @@ fn triggered_item_gauge_rules_follow_their_catalog_events() {
         .unwrap();
     assert_eq!(i32_field(&state, "party_gauge"), Some(expected(200)));
 
-    runtime.passives = vec![passive(1990543, Some(2), 3_000)];
+    runtime.passives = vec![passive(72001085, 1990543, Some(2), 3_000)];
     state.set_field_by_name("party_gauge", Value::I32(0));
     runtime.acquired_panel_turn = 0;
     runtime
         .acquire_current_panel(&proto, &rules, &mut state)
         .unwrap();
     assert_eq!(i32_field(&state, "party_gauge"), Some(expected(3_000)));
+
+    runtime.passives = vec![passive(120000292, 600000335, Some(0), 1_000)];
+    state.set_field_by_name("party_gauge", Value::I32(0));
+    let results = runtime
+        .prepare_turn(&proto, &mut state, actor_id, b"turn-start", "tx", 1)
+        .unwrap()
+        .0;
+    assert_eq!(i32_field(&state, "party_gauge"), Some(expected(1_000)));
+    assert_eq!(
+        message_i32_field(&results[0], "party_gauge_heal", "value"),
+        Some(expected(1_000))
+    );
+    runtime
+        .prepare_turn(&proto, &mut state, actor_id, b"turn-start", "tx", 1)
+        .unwrap();
+    assert_eq!(i32_field(&state, "party_gauge"), Some(expected(1_000)));
 }
 
 #[test]

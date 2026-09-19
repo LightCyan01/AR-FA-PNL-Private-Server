@@ -581,6 +581,7 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                             | "action_after"
                             | "party_tool_after"
                             | "battle_start"
+                            | "turn_start"
                             | "attacked"
                             | "heal_received"
                             | "panel_acquired"
