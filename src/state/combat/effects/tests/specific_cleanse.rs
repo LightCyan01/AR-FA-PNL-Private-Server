@@ -28,6 +28,27 @@ fn strengthen_removal_covers_all_owners() {
 }
 
 #[test]
+fn bs_attack_damage_up_cleanse_covers_all_owners() {
+    for skill_id in [
+        22001839, 32002691, 32002692, 32003287, 32004253, 32004272, 32004725, 32005081,
+    ] {
+        let rule = rule_for(76246012, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                rule.target.as_str(),
+                rule.phase.as_str(),
+                rule.operation.as_str()
+            ),
+            ("self", "after", "cleanse_positive")
+        );
+        assert_eq!(rule.affected_state_ids, [50001]);
+        assert!(!rule.positive);
+    }
+}
+
+#[test]
 fn specific_cleanses_preserve_unrelated_states() {
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),

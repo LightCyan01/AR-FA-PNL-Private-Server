@@ -1,12 +1,14 @@
 use super::registry::Expiry;
 use super::runtime::{Instance, Runtime};
 use super::runtime_lamp::{heal_all, heal_self};
-use super::runtime_match::{condition, context_matches, selected_for_source_character};
+use super::runtime_match::{
+    condition, context_matches, selected_for_source_character, state_application_blocked,
+};
 use super::runtime_panel::scale_panel_value;
 use super::runtime_resources::{
     add_party_gauge, apply_burst_gauge_passive, apply_party_gauge_passive,
 };
-use super::runtime_results::{effect_result, turn_state_change_result};
+use super::runtime_results::{effect_result, status_effect_result, turn_state_change_result};
 use crate::state::combat::prelude::*;
 use std::collections::BTreeSet;
 
@@ -392,6 +394,10 @@ impl Runtime {
         let hit_results = results
             .iter()
             .filter(|result| !bool_field(result, "is_miss") && !bool_field(result, "is_invalid"));
+        let critical = hit_results
+            .clone()
+            .any(|result| bool_field(result, "is_critical"));
+        let mut refreshed_self = BTreeSet::new();
         for passive in self.passives.clone().into_iter().filter(|passive| {
             passive.source == source_id && passive.rule.trigger.as_deref() == Some("attack_after")
         }) {
@@ -413,6 +419,57 @@ impl Runtime {
                         passive.value,
                     )?);
                 }
+                continue;
+            }
+            if passive.rule.target == "self" {
+                if !bool_field(source, "is_alive")
+                    || !context_matches(&passive.rule, passive.source_character_id, skill, critical)
+                    || !condition(&passive.rule, source)
+                {
+                    continue;
+                }
+                if state_application_blocked(source, &passive.rule)? {
+                    triggered.push(status_effect_result(
+                        proto,
+                        passive.rule.id,
+                        source_id,
+                        source_id,
+                        true,
+                        &passive.rule,
+                        passive.value,
+                        4,
+                    )?);
+                    continue;
+                }
+                if refreshed_self.insert((source_id, passive.rule.id)) {
+                    self.instances.retain(|instance| {
+                        !(instance.source == source_id
+                            && instance.target == source_id
+                            && instance.rule.id == passive.rule.id
+                            && instance.rule.trigger.as_deref() == Some("attack_after"))
+                    });
+                }
+                self.instances.push(Instance {
+                    source: source_id,
+                    source_character_id: passive.source_character_id,
+                    target: source_id,
+                    value: passive.value,
+                    remaining: passive.rule.duration,
+                    rule: passive.rule.clone(),
+                });
+                self.managed
+                    .entry(source_id)
+                    .or_default()
+                    .insert(passive.rule.state_id);
+                triggered.push(effect_result(
+                    proto,
+                    passive.rule.id,
+                    source_id,
+                    source_id,
+                    true,
+                    &passive.rule,
+                    passive.value,
+                )?);
                 continue;
             }
             for result in hit_results.clone() {

@@ -108,4 +108,72 @@ fn critical_skill_modifiers_apply_only_after_critical_hits() {
         .trigger_attack_after(&proto, &rules, &mut state, actor_id, skill, &[critical])
         .unwrap();
     assert_eq!(summary(&state, actor_id, 1), initial + 10_000);
+
+    let stacked_rule = rule_for_occurrence(6000374, "passive", "ability", 300396, Some(0))
+        .unwrap()
+        .unwrap()
+        .clone();
+    assert_eq!(
+        (
+            stacked_rule.target.as_str(),
+            stacked_rule.trigger.as_deref(),
+            stacked_rule.skill_target_types.as_slice(),
+            &stacked_rule.expiry,
+            stacked_rule.duration,
+        ),
+        ("self", Some("attack_after"), &[3][..], &Expiry::Turn, 1)
+    );
+    for ability_id in [300396, 300397] {
+        for index in 0..4 {
+            assert!(
+                rule_for_occurrence(6000374, "passive", "ability", ability_id, Some(index),)
+                    .unwrap()
+                    .is_some()
+            );
+        }
+    }
+
+    let mut stacked = Runtime::default();
+    stacked.prepare(&state, "stacked-attack-after").unwrap();
+    for _ in 0..4 {
+        stacked.passives.push(Passive {
+            source: actor_id,
+            value: 500,
+            rule: stacked_rule.clone(),
+            source_character_id: stacked_rule.source_character_ids[0],
+            source_type: 0,
+        });
+    }
+    let before = summary(&state, actor_id, 1);
+    let hit = build_skill_result(
+        &proto, target_id, 1, 0, 0, 0, true, false, false, false, false, false, false,
+    )
+    .unwrap();
+    assert_eq!(
+        stacked
+            .trigger_attack_after(
+                &proto,
+                &rules,
+                &mut state,
+                actor_id,
+                skill,
+                std::slice::from_ref(&hit),
+            )
+            .unwrap()
+            .len(),
+        4
+    );
+    assert_eq!(summary(&state, actor_id, 1), before + 2_000);
+    assert_eq!(
+        stacked
+            .instances
+            .iter()
+            .filter(|instance| instance.rule.id == 6000374)
+            .count(),
+        4
+    );
+    stacked
+        .trigger_attack_after(&proto, &rules, &mut state, actor_id, skill, &[hit])
+        .unwrap();
+    assert_eq!(summary(&state, actor_id, 1), before + 2_000);
 }
