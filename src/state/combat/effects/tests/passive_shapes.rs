@@ -89,3 +89,68 @@ fn passive_attack_shape_and_role_filters_follow_master_context() {
     ));
     assert!(!selected(attacker, &other_member, &other_member, &[]));
 }
+
+#[test]
+fn broken_target_passives_keep_source_filters_and_runtime_gate() {
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let rule = rule_for(72500122, "passive", "ability", 1980168)
+        .unwrap()
+        .unwrap()
+        .clone();
+    assert!(rule.target_broken);
+    assert!(rule.source_character_ids.contains(&60201));
+    let mut ally = empty_message(&proto, "blend.model.BattleAlly").unwrap();
+    ally.set_field_by_name("character_id", Value::I32(60201));
+    let mut actor = empty_message(&proto, "blend.model.BattleMember").unwrap();
+    actor.set_field_by_name("member_id", Value::I32(1));
+    actor.set_field_by_name("type", Value::EnumNumber(0));
+    actor.set_field_by_name("ally", Value::Message(ally));
+    let mut enemy = empty_message(&proto, "blend.model.BattleMember").unwrap();
+    let mut enemy_status = empty_message(&proto, "blend.model.BattleEnemy").unwrap();
+    enemy_status.set_field_by_name("is_broken", Value::Bool(false));
+    enemy.set_field_by_name("enemy", Value::Message(enemy_status));
+    let skill = TutorialSkill {
+        id: 1,
+        skill_type: 1,
+        skill_effect_type: 1,
+        skill_power_type: 1,
+        wait: 100,
+        power: 100,
+        break_power: 100,
+        break_power_type: 1,
+        attack_attributes: vec![7],
+        skill_target_type: Some(3),
+        effects: Vec::new(),
+        limit_count: None,
+        max_lamp: 0,
+        require_command_value: false,
+        skill_destination: None,
+        state_change_application_rate: 10_000,
+        hp_damage_bonus: None,
+    };
+    let runtime = Runtime {
+        passives: vec![Passive {
+            source: 1,
+            value: 10_000,
+            rule,
+            source_character_id: 60201,
+            source_type: 0,
+        }],
+        ..Runtime::default()
+    };
+    assert_eq!(
+        runtime.contextual_summary_against(&actor, Some(&enemy), &skill, false, 1),
+        0
+    );
+    let mut enemy_status = member_status(&enemy, "enemy").unwrap();
+    enemy_status.set_field_by_name("is_broken", Value::Bool(true));
+    enemy.set_field_by_name("enemy", Value::Message(enemy_status));
+    assert_eq!(
+        runtime.contextual_summary_against(&actor, Some(&enemy), &skill, false, 1),
+        10_000
+    );
+}
