@@ -70,6 +70,38 @@ fn compound_resistance_effects_keep_each_attribute() {
 }
 
 #[test]
+fn all_attribute_resistance_up_covers_every_owner() {
+    for skill_id in [
+        22001593, 22002062, 22002369, 22002376, 32003960, 32004029, 32004843, 32005762,
+    ] {
+        let rule = rule_for(71225003, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                rule.operation.as_str(),
+                rule.target.as_str(),
+                rule.sign,
+                rule.attack_attributes.as_slice(),
+                rule.state_id,
+                &rule.expiry,
+                rule.duration,
+            ),
+            (
+                "attribute_taken",
+                "self",
+                -1,
+                [1, 2, 3, 5, 6, 7, 8].as_slice(),
+                910004,
+                &Expiry::Attacked,
+                2,
+            )
+        );
+        assert!(rule.positive);
+    }
+}
+
+#[test]
 fn received_attribute_damage_uses_the_target_multiplier() {
     for (effect_id, attribute, state_id) in [
         (91001658, 5, 50006),
