@@ -3,6 +3,31 @@ use crate::state::combat::prelude::*;
 use std::path::Path;
 
 #[test]
+fn strengthen_removal_covers_all_owners() {
+    for (skill_id, target) in [
+        (20007183, "enemies"),
+        (20009810, "targets"),
+        (20009811, "targets"),
+        (22000175, "targets"),
+        (22000489, "targets"),
+        (22000566, "enemies"),
+        (22000787, "enemies"),
+        (32000918, "targets"),
+        (32000959, "targets"),
+    ] {
+        let rule = rule_for(780045012, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (rule.target.as_str(), rule.phase.as_str(), rule.operation.as_str()),
+            (target, "after", "cleanse_positive")
+        );
+        assert!(rule.affected_state_ids.is_empty());
+        assert!(!rule.positive);
+    }
+}
+
+#[test]
 fn specific_cleanses_preserve_unrelated_states() {
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
