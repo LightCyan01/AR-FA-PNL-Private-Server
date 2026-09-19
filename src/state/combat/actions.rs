@@ -364,8 +364,7 @@ pub(crate) fn build_action_setup(
             );
         }
         if !is_extra_turn
-            && i32_field(&state, "bomb_gauge").unwrap_or_default()
-                >= rules.constants.max_bomb_gauge
+            && i32_field(&state, "bomb_gauge").unwrap_or_default() >= rules.constants.max_bomb_gauge
         {
             setup.set_field_by_name(
                 "ship_tool_selections",
@@ -517,9 +516,15 @@ fn build_character_selection_targets(
     )
     .map_err(|_| StateError::InvalidRequest)?;
     let (panel, break_panel) = if let Some(runtime) = runtime {
-        (runtime.panel_multiplier(state)?, runtime.panel_break_multiplier(state)?)
+        (
+            runtime.panel_multiplier(state)?,
+            runtime.panel_break_multiplier(state)?,
+        )
     } else {
-        (battle_panel_multiplier(state), battle_panel_break_multiplier(state))
+        (
+            battle_panel_multiplier(state),
+            battle_panel_break_multiplier(state),
+        )
     };
     let target_type = skill.skill_target_type.ok_or(StateError::InvalidRequest)?;
     let target_member_type = if matches!(target_type, 1 | 2 | 4) {
@@ -592,17 +597,16 @@ fn build_character_selection_targets(
                 true,
                 10_000,
             )?;
-            let break_damage =
-                policy_break_damage(
-                    &actor,
-                    &target,
-                    skill,
-                    runtime,
-                    Some((rules, &members)),
-                    break_panel,
-                    false,
-                    10_000,
-                )?;
+            let break_damage = policy_break_damage(
+                &actor,
+                &target,
+                skill,
+                runtime,
+                Some((rules, &members)),
+                break_panel,
+                false,
+                10_000,
+            )?;
             let attribute = preferred_attack_attribute(&target, skill)?;
             let resistance = target_resistance(&target, attribute)?;
             preview.set_field_by_name("hp_damage", Value::Message(wrapper_i64(proto, damage)?));
@@ -679,7 +683,13 @@ pub(crate) fn build_skill_selections(
             .transpose()?;
         let preview_skill = transformed.unwrap_or(skill);
         let (target_type, target_values) = build_character_selection_targets(
-            proto, rules, state, actor_id, preview_skill, resources, runtime,
+            proto,
+            rules,
+            state,
+            actor_id,
+            preview_skill,
+            resources,
+            runtime,
         )?;
         if target_values.is_empty() {
             continue;
@@ -760,11 +770,18 @@ fn build_tool_selection_targets(
                     .ok()
                     .is_some_and(|enemy| bool_field(&enemy, "is_broken"));
             let damage = policy_tool_damage(
-                rules, tools, &members, target, skill, runtime, broken, 10_000,
+                rules, tools, &members, target, skill, runtime, broken, false, 10_000,
+            )?;
+            let critical_damage = policy_tool_damage(
+                rules, tools, &members, target, skill, runtime, broken, true, 10_000,
             )?;
             let attribute = preferred_attack_attribute(target, skill)?;
             let resistance = target_resistance(target, attribute)?;
             preview.set_field_by_name("hp_damage", Value::Message(wrapper_i64(proto, damage)?));
+            preview.set_field_by_name(
+                "hp_damage_for_critical",
+                Value::Message(wrapper_i64(proto, critical_damage)?),
+            );
             preview.set_field_by_name(
                 "is_killed",
                 Value::Bool(damage >= i64::from(i32_field(target, "hp").unwrap_or_default())),
@@ -903,6 +920,7 @@ pub(crate) fn policy_tool_damage(
     skill: &TutorialSkill,
     runtime: Option<&effects::Runtime>,
     broken: bool,
+    critical: bool,
     variance: u32,
 ) -> Result<i64, StateError> {
     let attribute = preferred_attack_attribute(target, skill)?;
@@ -914,27 +932,30 @@ pub(crate) fn policy_tool_damage(
                 .saturating_sub(i64::from(state_change_summary_value(member, 28)))
                 .saturating_add(runtime.map_or(0, |runtime| {
                     runtime
-                        .contextual_summary(member, skill, false, 27)
-                        .saturating_sub(runtime.contextual_summary(member, skill, false, 28))
+                        .contextual_summary(member, skill, critical, 27)
+                        .saturating_sub(runtime.contextual_summary(member, skill, critical, 28))
                 }))
         })
         .max()
-        .ok_or(StateError::InvalidRequest)?;
+        .ok_or(StateError::InvalidRequest)?
+        .saturating_add(runtime.map_or(Ok(0), |runtime| {
+            runtime.battle_tool_party_bonus(rules, members, "damage")
+        })? as i64);
     let item_penetration = members
         .iter()
         .filter(|member| member_type(member).ok() == Some(0) && bool_field(member, "is_alive"))
         .map(|member| {
             i64::from(state_change_summary_value(member, 34))
                 + runtime.map_or(0, |runtime| {
-                    runtime.contextual_summary(member, skill, false, 34)
+                    runtime.contextual_summary(member, skill, critical, 34)
                 })
         })
         .max()
         .unwrap_or(0)
-        + effects::instant_summary(skill, target, false, 34)?
+        + effects::instant_summary(skill, target, critical, 34)?
         + i64::from(state_change_summary_value(target, 19))
         + runtime.map_or(0, |runtime| {
-            runtime.contextual_summary(target, skill, false, 19)
+            runtime.contextual_summary(target, skill, critical, 19)
         });
     let (penetration_numerator, penetration_denominator) =
         effects::penetration_factor(item_penetration);
@@ -958,13 +979,14 @@ pub(crate) fn policy_tool_damage(
     let trait_bonus = magic_trait_bonus
         .checked_add(attribute_trait_bonus)
         .ok_or(StateError::InvalidRequest)?;
-    let incoming = effects::incoming_multiplier_for_skill(target, skill, runtime, false)?;
+    let incoming = effects::incoming_multiplier_for_skill(target, skill, runtime, None, critical)?;
     let numerator = i128::from(skill.power.max(0))
         * i128::from(10_000i64 + item_bonus + i64::from(trait_bonus))
         * resistance
         * i128::from(variance)
-        * penetration_numerator;
-    let denominator = 10i128 * 10_000 * 100 * 10_000;
+        * penetration_numerator
+        * if critical { 150 } else { 100 };
+    let denominator = 10i128 * 10_000 * 100 * 10_000 * 100;
     Ok(
         (numerator * i128::from(incoming) / (denominator * 10_000 * penetration_denominator))
             .clamp(0, 9_999_999_999) as i64,

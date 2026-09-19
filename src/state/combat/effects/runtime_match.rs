@@ -10,25 +10,26 @@ pub(super) fn condition(rule: &Rule, source: &DynamicMessage) -> bool {
             || matches!(
                 key.as_str(),
                 "hp_min"
-                | "hp_max"
-                | "hp_below"
-                | "source_abnormal_count_max"
-                | "target_hp_min"
-                | "target_hp_max"
-                | "target_hp_below"
-                | "target_negative"
-                | "target_abnormal"
-                | "target_positive"
-                | "target_negative_count_min"
-                | "target_negative_count_max"
-                | "target_abnormal_count_min"
-                | "target_abnormal_count_max"
-                | "target_state_id"
-                | "target_state_count_id"
-                | "target_state_count_min"
-                | "opponent_negative"
-                | "opponent_abnormal"
-                | "skill_lamp_full"
+                    | "hp_max"
+                    | "hp_below"
+                    | "source_abnormal_count_max"
+                    | "target_hp_min"
+                    | "target_hp_max"
+                    | "target_hp_below"
+                    | "target_negative"
+                    | "target_abnormal"
+                    | "target_positive"
+                    | "target_negative_count_min"
+                    | "target_negative_count_max"
+                    | "target_abnormal_count_min"
+                    | "target_abnormal_count_max"
+                    | "target_state_id"
+                    | "target_state_count_id"
+                    | "target_state_count_min"
+                    | "opponent_negative"
+                    | "opponent_abnormal"
+                    | "opponent_hp_max"
+                    | "skill_lamp_full"
             )
     }) && rule
         .condition
@@ -84,9 +85,15 @@ pub(super) fn target_condition(rule: &Rule, target: &DynamicMessage) -> bool {
         )
         .unwrap_or(i32::MAX)
     };
-    let negative_count = registry().ok().map_or(0, |rules| count(&rules.negative_state_ids));
-    let abnormal_count = registry().ok().map_or(0, |rules| count(&rules.abnormal_state_ids));
-    let positive_count = registry().ok().map_or(0, |rules| count(&rules.positive_state_ids));
+    let negative_count = registry()
+        .ok()
+        .map_or(0, |rules| count(&rules.negative_state_ids));
+    let abnormal_count = registry()
+        .ok()
+        .map_or(0, |rules| count(&rules.abnormal_state_ids));
+    let positive_count = registry()
+        .ok()
+        .map_or(0, |rules| count(&rules.positive_state_ids));
     rule.condition
         .get("target_hp_min")
         .is_none_or(|n| hp * 100 >= maximum * i64::from(*n))
@@ -295,18 +302,24 @@ pub(super) fn contextual_rule(rule: &Rule) -> bool {
 pub(super) fn opponent_contextual_rule(rule: &Rule) -> bool {
     rule.condition.contains_key("opponent_negative")
         || rule.condition.contains_key("opponent_abnormal")
+        || rule.condition.contains_key("opponent_hp_max")
 }
 
 pub(super) fn opponent_condition(rule: &Rule, target: &DynamicMessage) -> bool {
+    let hp = i64::from(i32_field(target, "hp").unwrap_or_default());
+    let maximum = i64::from(i32_field(target, "max_hp").unwrap_or(1).max(1));
     let has = |ids: &[i32]| {
-        message_list(target, "state_changes").iter().any(|change| {
-            ids.contains(&i32_field(change, "state_change_id").unwrap_or_default())
-        })
+        message_list(target, "state_changes")
+            .iter()
+            .any(|change| ids.contains(&i32_field(change, "state_change_id").unwrap_or_default()))
     };
     rule.condition
         .get("opponent_negative")
         .is_none_or(|required| {
-            *required == 0 || registry().ok().is_some_and(|rules| has(&rules.negative_state_ids))
+            *required == 0
+                || registry()
+                    .ok()
+                    .is_some_and(|rules| has(&rules.negative_state_ids))
         })
         && rule
             .condition
@@ -317,6 +330,10 @@ pub(super) fn opponent_condition(rule: &Rule, target: &DynamicMessage) -> bool {
                         .ok()
                         .is_some_and(|rules| has(&rules.abnormal_state_ids))
             })
+        && rule
+            .condition
+            .get("opponent_hp_max")
+            .is_none_or(|limit| hp * 100 <= maximum * i64::from(*limit))
 }
 
 pub(super) fn context_matches(

@@ -81,12 +81,7 @@ fn passive_attack_shape_and_role_filters_follow_master_context() {
     let attacker_id = attacker.source_character_ids[0];
     let attacker_member = member(attacker_id);
     let other_member = member(i32::MAX);
-    assert!(selected(
-        attacker,
-        &attacker_member,
-        &attacker_member,
-        &[]
-    ));
+    assert!(selected(attacker, &attacker_member, &attacker_member, &[]));
     assert!(!selected(attacker, &other_member, &other_member, &[]));
 }
 

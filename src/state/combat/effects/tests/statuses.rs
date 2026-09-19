@@ -215,10 +215,7 @@ fn direct_statuses_stack_tick_and_gate_the_turn() {
             .unwrap();
         assert_eq!((rule.state_id, rule.duration), (940007, duration));
     }
-    for (effect_id, skill_id, duration) in [
-        (780063000, 32002681, 2),
-        (780056012, 32000809, 3),
-    ] {
+    for (effect_id, skill_id, duration) in [(780063000, 32002681, 2), (780056012, 32000809, 3)] {
         let rule = rule_for(effect_id, "active", "skill", skill_id)
             .unwrap()
             .unwrap();
@@ -227,11 +224,17 @@ fn direct_statuses_stack_tick_and_gate_the_turn() {
     let shared_poison = rule_for(1039, "active", "skill", 20000627)
         .unwrap()
         .unwrap();
-    assert_eq!((shared_poison.state_id, shared_poison.duration), (940007, 1));
+    assert_eq!(
+        (shared_poison.state_id, shared_poison.duration),
+        (940007, 1)
+    );
     let poison_override = rule_for(1039, "active", "skill", 20008490)
         .unwrap()
         .unwrap();
-    assert_eq!((poison_override.state_id, poison_override.duration), (940007, 3));
+    assert_eq!(
+        (poison_override.state_id, poison_override.duration),
+        (940007, 3)
+    );
     let miss_action = (1..1_000)
         .find(|number| {
             deterministic_roll(

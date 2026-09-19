@@ -1,10 +1,94 @@
-use super::runtime::{Instance, Runtime};
+use super::runtime::{Instance, Passive, Runtime};
 use super::runtime_match::{condition, selected_for_source_character, state_application_blocked};
 use super::runtime_results::{effect_result, status_effect_result};
 use crate::state::combat::prelude::*;
 use std::collections::BTreeSet;
 
 impl Runtime {
+    pub(super) fn grant_triggered_modifier(
+        &mut self,
+        proto: &ProtoRegistry,
+        passive: &Passive,
+        source: &DynamicMessage,
+        members: &[DynamicMessage],
+        target_ids: &[i32],
+    ) -> Result<Vec<DynamicMessage>, StateError> {
+        let mut results = Vec::new();
+        for target_id in target_ids.iter().copied() {
+            let Some(target) = members
+                .iter()
+                .find(|member| member_id(member).ok() == Some(target_id))
+            else {
+                continue;
+            };
+            if !selected_for_source_character(
+                &passive.rule,
+                source,
+                passive.source_character_id,
+                target,
+                target_ids,
+            ) {
+                continue;
+            }
+            if state_application_blocked(target, &passive.rule)? {
+                results.push(status_effect_result(
+                    proto,
+                    passive.rule.id,
+                    passive.source,
+                    target_id,
+                    true,
+                    &passive.rule,
+                    passive.value,
+                    4,
+                )?);
+                continue;
+            }
+            let value =
+                self.apply_potency(members, source, target_id, &passive.rule, passive.value)?;
+            let existing = self
+                .instances
+                .iter()
+                .filter(|instance| {
+                    instance.source == passive.source
+                        && instance.target == target_id
+                        && instance.rule.id == passive.rule.id
+                })
+                .count();
+            if passive.rule.stack_limit > 1 && existing >= passive.rule.stack_limit {
+                continue;
+            }
+            if passive.rule.stack_limit <= 1 {
+                self.instances.retain(|instance| {
+                    !(instance.source == passive.source
+                        && instance.target == target_id
+                        && instance.rule.id == passive.rule.id)
+                });
+            }
+            self.instances.push(Instance {
+                source: passive.source,
+                source_character_id: passive.source_character_id,
+                target: target_id,
+                value,
+                remaining: passive.rule.duration,
+                rule: passive.rule.clone(),
+            });
+            self.managed
+                .entry(target_id)
+                .or_default()
+                .insert(passive.rule.state_id);
+            results.push(effect_result(
+                proto,
+                passive.rule.id,
+                passive.source,
+                target_id,
+                true,
+                &passive.rule,
+                value,
+            )?);
+        }
+        Ok(results)
+    }
+
     pub(crate) fn trigger_attack_before(
         &mut self,
         proto: &ProtoRegistry,

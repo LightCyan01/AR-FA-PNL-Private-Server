@@ -3,6 +3,15 @@ use crate::state::combat::prelude::*;
 use std::path::Path;
 
 #[test]
+fn equipment_healing_uses_the_outgoing_healing_state() {
+    let rule = rule_for(3_000_031, "passive", "", 0).unwrap().unwrap();
+    assert_eq!(
+        (rule.operation.as_str(), rule.state_id),
+        ("healing", 50_013)
+    );
+}
+
+#[test]
 fn pre_attack_skill_damage_stacks_to_its_master_cap() {
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),

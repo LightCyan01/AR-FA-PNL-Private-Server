@@ -93,6 +93,7 @@ pub(crate) fn incoming_multiplier_for_skill(
     target: &DynamicMessage,
     skill: &TutorialSkill,
     runtime: Option<&Runtime>,
+    opponent: Option<&DynamicMessage>,
     critical: bool,
 ) -> Result<i64, StateError> {
     Ok((incoming_multiplier_with_runtime(
@@ -100,8 +101,8 @@ pub(crate) fn incoming_multiplier_for_skill(
         preferred_attack_attribute(target, skill)?,
         runtime,
     ) + runtime.map_or(0, |runtime| {
-        runtime.contextual_summary(target, skill, critical, 11)
-            - runtime.contextual_summary(target, skill, critical, 12)
+        runtime.contextual_summary_against(target, opponent, skill, critical, 11)
+            - runtime.contextual_summary_against(target, opponent, skill, critical, 12)
     }))
     .clamp(0, 1_000_000))
 }
@@ -147,7 +148,7 @@ pub(crate) fn secondary_damage(
     } else {
         15_000
     };
-    let incoming = incoming_multiplier_for_skill(target, skill, runtime, critical)?;
+    let incoming = incoming_multiplier_for_skill(target, skill, runtime, Some(source), critical)?;
     let penetration = (i64::from(state_change_summary_value(source, 10))
         + contextual(10)
         + instant_summary_for_source(Some(source), skill, target, critical, 10)?

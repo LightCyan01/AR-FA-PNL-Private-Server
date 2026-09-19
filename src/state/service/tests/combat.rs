@@ -788,6 +788,7 @@ fn battle_tool_attribute_traits_follow_catalog_attributes() {
         skill,
         None,
         false,
+        false,
         10_000,
     )
     .unwrap();
@@ -798,6 +799,7 @@ fn battle_tool_attribute_traits_follow_catalog_attributes() {
         target,
         skill,
         None,
+        false,
         false,
         10_000,
     )
@@ -881,6 +883,7 @@ fn battle_tool_damage_uses_contextual_incoming_modifiers() {
         skill,
         None,
         false,
+        false,
         10_000,
     )
     .unwrap();
@@ -891,6 +894,7 @@ fn battle_tool_damage_uses_contextual_incoming_modifiers() {
         target,
         skill,
         Some(&runtime),
+        false,
         false,
         10_000,
     )

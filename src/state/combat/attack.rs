@@ -208,8 +208,24 @@ pub(crate) fn apply_attack_results(
             results.push(miss);
             continue;
         }
-        let critical = !is_tool
-            && (guaranteed_critical
+        let critical_rate = if is_tool {
+            runtime.battle_tool_party_bonus(rules, &members, "critical")?
+        } else {
+            (1_000i64 + i64::from(state_change_summary_value(&members[actor_index], 6)))
+                .clamp(0, 10_000) as i32
+        };
+        let critical = if is_tool {
+            deterministic_roll(
+                secret,
+                start_txid,
+                action_number,
+                b"critical",
+                target_id,
+                draw_index,
+            ) % 10_000
+                < critical_rate.clamp(0, 10_000) as u32
+        } else {
+            guaranteed_critical
                 || effects::receives_guaranteed_critical(&members[target_index])
                 || (actor_type == 0
                     && deterministic_roll(
@@ -220,9 +236,8 @@ pub(crate) fn apply_attack_results(
                         target_id,
                         draw_index,
                     ) % 10_000
-                        < (1_000i64
-                            + i64::from(state_change_summary_value(&members[actor_index], 6)))
-                        .clamp(0, 10_000) as u32));
+                        < critical_rate as u32)
+        };
         let variance = 10_000
             + deterministic_roll(
                 secret,
@@ -241,6 +256,7 @@ pub(crate) fn apply_attack_results(
                 skill,
                 Some(runtime),
                 target_broken,
+                critical,
                 variance,
             )?
         } else if actor_type == 1 {
@@ -304,8 +320,18 @@ pub(crate) fn apply_attack_results(
         } else {
             damage
         };
-        let critical_damage = if is_tool {
-            0
+        let critical_damage = if let Some(tools) = tools {
+            policy_tool_damage(
+                rules,
+                tools,
+                &members,
+                &members[target_index],
+                skill,
+                Some(runtime),
+                target_broken,
+                true,
+                variance,
+            )?
         } else if actor_type == 1 {
             if critical {
                 damage
@@ -682,6 +708,16 @@ fn resolve_skill_action(
                 effective_skill,
                 &skill_results,
             )?);
+            if actor_type == 0 {
+                let bonus = runtime.battle_tool_party_bonus(
+                    rules,
+                    &message_list(state, "members"),
+                    "gauge",
+                )?;
+                if bonus > 0 {
+                    effects::add_party_gauge(state, bonus)?;
+                }
+            }
             if allow_nested {
                 pending_actions.extend(runtime.collect_nested_actions(
                     rules,
@@ -992,10 +1028,7 @@ pub(crate) fn reduce_battle_attack_with_effects(
                 i32_field(&command, "main_target_id").ok_or(StateError::InvalidRequest)?;
             let extra_skill_id = effect_runtime.current_extra_skill(&state)?;
             let selected_skill = if skill_type == 0 {
-                let skill = rule_skill(
-                    rules,
-                    extra_skill_id.ok_or(StateError::InvalidRequest)?,
-                )?;
+                let skill = rule_skill(rules, extra_skill_id.ok_or(StateError::InvalidRequest)?)?;
                 if skill.skill_type != 0 {
                     return Err(StateError::InvalidRequest);
                 }
@@ -1227,8 +1260,8 @@ pub(crate) fn reduce_battle_attack_with_effects(
             let command_value = action.command_value;
             let action_targets = select_target_ids(&state, actor_id, actor_type, target_id, skill)?;
             let panel = effect_runtime.panel_multiplier(&state)?;
-            let consumes_panel = action_mode != 7
-                && (mode != 1 || action_index + 1 == action_count);
+            let consumes_panel =
+                action_mode != 7 && (mode != 1 || action_index + 1 == action_count);
             if matches!(action_mode, 1 | 8) {
                 let mut tools = message_list(&state, "battle_tools");
                 for number in &action.battle_tool_numbers {
@@ -1353,9 +1386,9 @@ pub(crate) fn reduce_battle_attack_with_effects(
                 Value::List(members.into_iter().map(Value::Message).collect()),
             );
             if matches!(mode, 1 | 8) && action_index + 1 == action_count {
-                resolved.effect_results.extend(
-                    effect_runtime.trigger_party_tool_effects(proto, rules, &mut state)?,
-                );
+                resolved
+                    .effect_results
+                    .extend(effect_runtime.trigger_party_tool_effects(proto, rules, &mut state)?);
             }
             state.set_field_by_name("total_turn", Value::I32(turn_number));
             refresh_burst_enable(rules, &mut state)?;
@@ -1585,36 +1618,37 @@ pub(crate) fn reduce_battle_attack_with_effects(
                 .ok_or(StateError::InvalidRequest)?;
             let enemy_rule = rule_enemy(rules, enemy_member_status_enemy_id(&enemy_member)?)?;
             let panel_id = current_panel_id(&state);
-            let enemy_skill_id = if let Some(skill_id) = effect_runtime.current_extra_skill(&state)? {
-                effect_runtime
-                    .take_current_extra_skill(&state)?
-                    .ok_or(StateError::InvalidRequest)?;
-                skill_id
-            } else if is_burst_panel_id(panel_id) {
-                enemy_rule.burst_skill_id
-            } else {
-                let choices: Vec<i32> = rules
-                    .enemy_ai_units
-                    .iter()
-                    .filter(|unit| unit.enemy_ai_id == enemy_rule.enemy_ai_id)
-                    .flat_map(|unit| unit.skill_ids.iter().copied())
-                    .collect();
-                if choices.is_empty() {
-                    return Err(StateError::TutorialRules(format!(
-                        "enemy AI {} has no skill",
-                        enemy_rule.enemy_ai_id
-                    )));
-                }
-                let roll = deterministic_roll(
-                    secret,
-                    start_txid,
-                    action_number,
-                    b"enemy-skill",
-                    actor_id,
-                    0,
-                );
-                choices[(roll as usize) % choices.len()]
-            };
+            let enemy_skill_id =
+                if let Some(skill_id) = effect_runtime.current_extra_skill(&state)? {
+                    effect_runtime
+                        .take_current_extra_skill(&state)?
+                        .ok_or(StateError::InvalidRequest)?;
+                    skill_id
+                } else if is_burst_panel_id(panel_id) {
+                    enemy_rule.burst_skill_id
+                } else {
+                    let choices: Vec<i32> = rules
+                        .enemy_ai_units
+                        .iter()
+                        .filter(|unit| unit.enemy_ai_id == enemy_rule.enemy_ai_id)
+                        .flat_map(|unit| unit.skill_ids.iter().copied())
+                        .collect();
+                    if choices.is_empty() {
+                        return Err(StateError::TutorialRules(format!(
+                            "enemy AI {} has no skill",
+                            enemy_rule.enemy_ai_id
+                        )));
+                    }
+                    let roll = deterministic_roll(
+                        secret,
+                        start_txid,
+                        action_number,
+                        b"enemy-skill",
+                        actor_id,
+                        0,
+                    );
+                    choices[(roll as usize) % choices.len()]
+                };
             let enemy_skill = rule_skill(rules, enemy_skill_id)?;
             let target_id = if enemy_skill.skill_target_type == Some(1) {
                 actor_id

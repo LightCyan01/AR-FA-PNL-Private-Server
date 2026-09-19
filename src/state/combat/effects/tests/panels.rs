@@ -8,7 +8,11 @@ fn shared_enemy_panel_rules_keep_catalog_target_and_limit() {
         .unwrap()
         .unwrap();
     assert_eq!(
-        (neutral.target.as_str(), neutral.panel_to_id, neutral.panel_limit),
+        (
+            neutral.target.as_str(),
+            neutral.panel_to_id,
+            neutral.panel_limit
+        ),
         ("targets", 11, 1)
     );
     let weakened = rule_for(71146005, "active", "skill", 22000984)
@@ -67,7 +71,11 @@ fn burn_panel_conversion_covers_every_authoritative_variant() {
             .unwrap()
             .unwrap();
         assert_eq!(
-            (rule.panel_from_ids.as_slice(), rule.panel_to_id, rule.panel_limit),
+            (
+                rule.panel_from_ids.as_slice(),
+                rule.panel_to_id,
+                rule.panel_limit
+            ),
             ([11, 13, 26].as_slice(), 45, 10)
         );
     }
@@ -79,7 +87,10 @@ fn burn_panel_conversion_covers_every_authoritative_variant() {
     let negative = rule_for(71142001, "active", "skill", 32002748)
         .unwrap()
         .unwrap();
-    assert_eq!((negative.panel_from_ids.len(), negative.panel_limit), (14, 1));
+    assert_eq!(
+        (negative.panel_from_ids.len(), negative.panel_limit),
+        (14, 1)
+    );
     let empty = rule_for(71142001, "active", "skill", 32003110)
         .unwrap()
         .unwrap();
@@ -91,7 +102,9 @@ fn burn_panel_conversion_covers_every_authoritative_variant() {
 
 #[test]
 fn target_burst_panel_conversion_covers_every_authoritative_variant() {
-    let listed = [11, 12, 13, 15, 16, 18, 19, 20, 21, 22, 30, 33, 36, 39, 42, 45];
+    let listed = [
+        11, 12, 13, 15, 16, 18, 19, 20, 21, 22, 30, 33, 36, 39, 42, 45,
+    ];
     for skill_id in [22000298, 22000415, 22000810, 32000837] {
         let rule = rule_for(71149008, "active", "skill", skill_id)
             .unwrap()
@@ -158,8 +171,8 @@ fn tagged_ally_and_target_panel_rules_split_recipients() {
 #[test]
 fn healing_panel_aliases_preserve_the_next_non_burst_limit() {
     for skill_id in [
-        22000934, 22000939, 22000944, 22001434, 26002071, 26002339, 32001101,
-        32001178, 32002195, 32005633,
+        22000934, 22000939, 22000944, 22001434, 26002071, 26002339, 32001101, 32001178, 32002195,
+        32005633,
     ] {
         let rule = rule_for(71190007, "active", "skill", skill_id)
             .unwrap()
@@ -423,29 +436,33 @@ fn negative_panel_immunity_consumes_only_negative_panels() {
             .len(),
         1
     );
-    assert!(runtime.instances.iter().any(|instance| {
-        instance.rule.state_id == 510048 && instance.remaining == 2
-    }));
+    assert!(runtime
+        .instances
+        .iter()
+        .any(|instance| { instance.rule.state_id == 510048 && instance.remaining == 2 }));
 
     set_timeline_panels(&proto, &mut state, &[13], 1, 100).unwrap();
     assert_eq!(runtime.panel_multiplier(&state).unwrap(), (100, 100));
     runtime.consume_panel_potency(&state, actor_id).unwrap();
-    assert!(runtime.instances.iter().any(|instance| {
-        instance.rule.state_id == 510048 && instance.remaining == 1
-    }));
+    assert!(runtime
+        .instances
+        .iter()
+        .any(|instance| { instance.rule.state_id == 510048 && instance.remaining == 1 }));
 
     set_timeline_panels(&proto, &mut state, &[12], 1, 101).unwrap();
     runtime.consume_panel_potency(&state, actor_id).unwrap();
-    assert!(runtime.instances.iter().any(|instance| {
-        instance.rule.state_id == 510048 && instance.remaining == 1
-    }));
+    assert!(runtime
+        .instances
+        .iter()
+        .any(|instance| { instance.rule.state_id == 510048 && instance.remaining == 1 }));
 
     set_timeline_panels(&proto, &mut state, &[26], 1, 102).unwrap();
     assert_eq!(runtime.panel_multiplier(&state).unwrap(), (100, 100));
     runtime.consume_panel_potency(&state, actor_id).unwrap();
-    assert!(!runtime.instances.iter().any(|instance| {
-        instance.rule.state_id == 510048
-    }));
+    assert!(!runtime
+        .instances
+        .iter()
+        .any(|instance| { instance.rule.state_id == 510048 }));
     assert_eq!(runtime.panel_multiplier(&state).unwrap(), (40, 100));
 }
 

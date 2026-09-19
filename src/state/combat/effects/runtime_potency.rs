@@ -30,9 +30,17 @@ impl Runtime {
         } else {
             "given_positive_potency"
         };
-        let instance_applies = |owner, candidate: &str| {
-            (owner == target && candidate == operation)
-                || (owner == source_id && candidate == given_operation)
+        let rule_applies = |candidate: &Rule| {
+            (candidate.affected_state_ids.is_empty()
+                || candidate.affected_state_ids.contains(&rule.state_id))
+                && (candidate.effect_target_character_ids.is_empty()
+                    || message_i32_field(target_member, "ally", "character_id")
+                        .is_some_and(|id| candidate.effect_target_character_ids.contains(&id)))
+        };
+        let instance_applies = |instance: &super::runtime::Instance| {
+            ((instance.target == target && instance.rule.operation == operation)
+                || (instance.target == source_id && instance.rule.operation == given_operation))
+                && rule_applies(&instance.rule)
         };
         let passive_applies = |passive: &super::runtime::Passive| {
             let (recipient, candidate) = if passive.rule.operation == operation {
@@ -41,6 +49,9 @@ impl Runtime {
                 (source, given_operation)
             };
             if passive.rule.operation != candidate {
+                return false;
+            }
+            if !rule_applies(&passive.rule) {
                 return false;
             }
             members
@@ -61,7 +72,7 @@ impl Runtime {
         let rate = self
             .instances
             .iter()
-            .filter(|instance| instance_applies(instance.target, &instance.rule.operation))
+            .filter(|instance| instance_applies(instance))
             .fold(0i64, |total, instance| {
                 total.saturating_add(i64::from(instance.value))
             })
@@ -74,7 +85,7 @@ impl Runtime {
                     }),
             );
         for instance in self.instances.iter_mut().filter(|instance| {
-            instance_applies(instance.target, &instance.rule.operation)
+            instance_applies(instance)
                 && instance.rule.expiry == Expiry::Negative
                 && instance.remaining > 0
         }) {

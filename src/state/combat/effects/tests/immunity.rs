@@ -19,7 +19,14 @@ fn role_gated_healing_immunity_selects_only_matching_targets() {
             &supporter.expiry,
             supporter.duration,
         ),
-        ("healing_received", "targets", Some(10_000), 920001, &Expiry::Turn, 1)
+        (
+            "healing_received",
+            "targets",
+            Some(10_000),
+            920001,
+            &Expiry::Turn,
+            1
+        )
     );
 
     let proto = ProtoRegistry::from_file(Path::new(concat!(

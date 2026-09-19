@@ -3,10 +3,7 @@ use super::runtime::Passive;
 use super::runtime_results::effect_result;
 use crate::state::combat::prelude::*;
 
-pub(super) fn add_party_gauge(
-    state: &mut DynamicMessage,
-    value: i32,
-) -> Result<i32, StateError> {
+pub(crate) fn add_party_gauge(state: &mut DynamicMessage, value: i32) -> Result<i32, StateError> {
     let maximum = registry()?.max_party_gauge;
     let heal = i64::from(maximum).saturating_mul(i64::from(value.max(0))) / 10_000;
     let heal = i32::try_from(heal).map_err(|_| StateError::InvalidRequest)?;

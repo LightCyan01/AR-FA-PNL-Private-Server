@@ -141,6 +141,18 @@ pub(crate) struct RandomModifierChoice {
     pub(crate) positive: bool,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct BattleToolPartyRule {
+    pub(crate) owner_id: i32,
+    pub(crate) anchor_effect_id: i32,
+    pub(crate) anchor_value: i32,
+    pub(crate) tag_id: i32,
+    pub(crate) kind: String,
+    pub(crate) per_member: i32,
+    pub(crate) count_cap: i32,
+    pub(crate) maximum: i32,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct Rule {
     pub(crate) id: i32,
@@ -163,6 +175,8 @@ pub(crate) struct Rule {
     pub(crate) condition: BTreeMap<String, i32>,
     #[serde(default)]
     pub(crate) target_character_ids: Vec<i32>,
+    #[serde(default)]
+    pub(crate) effect_target_character_ids: Vec<i32>,
     #[serde(default)]
     pub(crate) include_source: bool,
     #[serde(default)]
@@ -235,6 +249,8 @@ pub(crate) struct Registry {
     pub(crate) removable_positive_state_ids: Vec<i32>,
     pub(crate) negative_state_ids: Vec<i32>,
     pub(crate) positive_state_ids: Vec<i32>,
+    #[serde(default)]
+    pub(crate) battle_tool_party_rules: Vec<BattleToolPartyRule>,
     pub(crate) abnormal_state_ids: Vec<i32>,
     pub(crate) negative_immunity_state_ids: Vec<i32>,
     pub(crate) abnormal_immunity_state_ids: Vec<i32>,
@@ -386,6 +402,7 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                         | "scaling_metadata"
                         | "marker"
                         | "random_modifier"
+                        | "random_level_state"
                         | "action_reroll"
                         | "target_rate"
                         | "cover"
@@ -439,6 +456,9 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                             | "cleanse_abnormal"
                             | "cleanse_positive"
                     ))
+                || (r.mode == "passive"
+                    && matches!(r.operation.as_str(), "healing" | "healing_received")
+                    && r.state_id <= 0)
                 || (r.operation == "panel_convert"
                     && (r.panel_to_id <= 0 || r.panel_from_ids.is_empty() || r.trigger_limit < 0))
                 || (r.operation == "field_effect" && r.fixed.is_none_or(|id| id <= 0))
@@ -478,11 +498,26 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                                 )
                                 || (choice.operation == "summary"
                                     && !(1..=36).contains(&choice.summary))
-                                || (matches!(choice.operation.as_str(), "taken_down" | "healing_received")
-                                    && choice.summary != 0)
+                                || (matches!(
+                                    choice.operation.as_str(),
+                                    "taken_down" | "healing_received"
+                                ) && choice.summary != 0)
                         })))
                 || (r.operation != "random_modifier"
                     && (r.random_draws != 0 || !r.random_choices.is_empty()))
+                || (r.operation == "random_level_state"
+                    && (r.mode != "active"
+                        || r.owner_type != "skill"
+                        || r.owner_index.is_none()
+                        || !matches!(r.target.as_str(), "self" | "enemies")
+                        || r.scale_by != "random"
+                        || r.scale_input_min <= 0
+                        || r.scale_input_max < r.scale_input_min
+                        || r.fixed.is_some()
+                        || r.state_id <= 0
+                        || r.stack_cap <= 0
+                        || r.expiry != Expiry::Permanent
+                        || r.duration != -1))
                 || (r.operation == "skill_damage_scale"
                     && (r.mode != "instant"
                         || !matches!(r.summary, 1 | 3 | 7)
@@ -495,18 +530,14 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                         || (r.scale_by == "party_tag_count"
                             && (r.summary != 3
                                 || r.scale_input_min == 0
-                                || r.condition
-                                    .get("party_tag_id")
-                                    .is_none_or(|id| *id <= 0)))
+                                || r.condition.get("party_tag_id").is_none_or(|id| *id <= 0)))
                         || r.scale_input_min < 0
                         || r.scale_input_max < r.scale_input_min
-                        || r.fixed.is_some_and(|minimum| {
-                            minimum < 0 || minimum >= r.scale_output_max
-                        })
+                        || r.fixed
+                            .is_some_and(|minimum| minimum < 0 || minimum >= r.scale_output_max)
                         || (r.scale_input_max == r.scale_input_min
                             && (r.scale_by != "opponent_count" || r.scale_input_min == 0))
-                        || (r.scale_input_max > r.scale_input_min
-                            && r.scale_output_max <= 0)))
+                        || (r.scale_input_max > r.scale_input_min && r.scale_output_max <= 0)))
                 || (r.operation == "heal"
                     && !r.scale_by.is_empty()
                     && (r.mode != "active"
@@ -524,9 +555,7 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                         || r.scale_output_max <= r.fixed.unwrap_or_default()
                         || (r.scale_by == "party_tag_count"
                             && (r.scale_input_min == 0
-                                || r.condition
-                                    .get("party_tag_id")
-                                    .is_none_or(|id| *id <= 0)))))
+                                || r.condition.get("party_tag_id").is_none_or(|id| *id <= 0)))))
                 || (r.operation == "attribute_taken"
                     && !r.scale_by.is_empty()
                     && (r.mode != "active"
@@ -535,13 +564,15 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                         || r.scale_input_min <= 0
                         || r.scale_input_max <= r.scale_input_min
                         || r.scale_output_max <= r.fixed.unwrap_or_default()
-                        || r.condition
-                            .get("party_tag_id")
-                            .is_none_or(|id| *id <= 0)))
+                        || r.condition.get("party_tag_id").is_none_or(|id| *id <= 0)))
                 || (!r.scale_by.is_empty()
                     && !matches!(
                         r.operation.as_str(),
-                        "skill_damage_scale" | "heal" | "summary" | "attribute_taken"
+                        "skill_damage_scale"
+                            | "heal"
+                            | "summary"
+                            | "attribute_taken"
+                            | "random_level_state"
                     ))
                 || r.stack_cap < 0
                 || (r.operation == "level_state"
@@ -561,23 +592,19 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                     && r.source_side_count_max < r.source_side_count_min)
                 || (r.expiry != Expiry::Permanent && (r.duration <= 0 || r.state_id <= 0))
                 || r.target_character_ids.iter().any(|id| *id <= 0)
-                || (r.include_source
-                    && (r.target != "allies" || r.target_character_ids.is_empty()))
+                || r.effect_target_character_ids.iter().any(|id| *id <= 0)
+                || (r.include_source && (r.target != "allies" || r.target_character_ids.is_empty()))
                 || r.source_character_ids.iter().any(|id| *id <= 0)
                 || r.required_ability_id < 0
-                || (r.required_ability_id > 0
-                    && (r.mode != "active" || r.owner_type != "skill"))
+                || (r.required_ability_id > 0 && (r.mode != "active" || r.owner_type != "skill"))
                 || r.source_state_level_min < 0
                 || (r.source_state_level_min > 0 && r.source_state_ids.len() != 1)
                 || r.source_state_ids.iter().any(|id| *id <= 0)
-                || r
-                    .affected_state_ids
-                    .iter()
-                    .any(|id| {
-                        *id <= 0
-                            || (r.operation == "abnormal_resistance"
-                                && !data.abnormal_state_ids.contains(id))
-                    })
+                || r.affected_state_ids.iter().any(|id| {
+                    *id <= 0
+                        || (r.operation == "abnormal_resistance"
+                            && !data.abnormal_state_ids.contains(id))
+                })
                 || r.skill_types.iter().any(|id| !matches!(id, 1..=3))
                 || r.skill_target_types.iter().any(|id| !matches!(id, 1..=6))
                 || r.attack_attributes
@@ -588,6 +615,7 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                         trigger,
                         "attack_before"
                             | "attack_after"
+                            | "skill_after"
                             | "action_after"
                             | "party_tool_after"
                             | "battle_start"
@@ -609,6 +637,19 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
         || data.removable_positive_state_ids.iter().any(|id| *id <= 0)
         || data.negative_state_ids.is_empty()
         || data.positive_state_ids.is_empty()
+        || data.battle_tool_party_rules.iter().any(|rule| {
+            rule.owner_id <= 0
+                || rule.anchor_effect_id <= 0
+                || rule.anchor_value <= 0
+                || rule.tag_id <= 0
+                || !matches!(rule.kind.as_str(), "gauge" | "damage" | "critical")
+                || rule.per_member <= 0
+                || rule.count_cap <= 0
+                || rule.maximum
+                    != rule
+                        .anchor_value
+                        .saturating_add(rule.per_member.saturating_mul(rule.count_cap))
+        })
         || data.abnormal_state_ids.is_empty()
         || data.negative_immunity_state_ids.is_empty()
         || data.abnormal_immunity_state_ids.is_empty()

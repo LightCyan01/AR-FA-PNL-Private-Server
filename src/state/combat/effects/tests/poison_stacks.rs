@@ -54,24 +54,17 @@ fn repeated_poison_uses_pre_action_abnormal_state() {
     }
     for (skill_id, count) in [(20001865, 3), (20001870, 5), (20001876, 1)] {
         for index in 0..count {
-            let rule = rule_for_occurrence(
-                780056012,
-                "active",
-                "skill",
-                skill_id,
-                Some(index),
-            )
-            .unwrap()
-            .unwrap();
+            let rule = rule_for_occurrence(780056012, "active", "skill", skill_id, Some(index))
+                .unwrap()
+                .unwrap();
             assert_eq!((rule.state_id, rule.duration), (940007, 3));
         }
     }
     for skill_id in [20001174, 20001329, 32000525] {
         for index in 0..5 {
-            let rule =
-                rule_for_occurrence(780063000, "active", "skill", skill_id, Some(index))
-                    .unwrap()
-                    .unwrap();
+            let rule = rule_for_occurrence(780063000, "active", "skill", skill_id, Some(index))
+                .unwrap()
+                .unwrap();
             assert_eq!((rule.state_id, rule.duration), (940007, 2));
         }
     }

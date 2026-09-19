@@ -18,9 +18,10 @@ pub(super) fn apply_level_state(
     increment: i32,
 ) -> Result<Vec<DynamicMessage>, StateError> {
     let mut results = Vec::new();
-    for target in members.iter().filter(|target| {
-        bool_field(target, "is_alive") && selected(rule, source, target, targets)
-    }) {
+    for target in members
+        .iter()
+        .filter(|target| bool_field(target, "is_alive") && selected(rule, source, target, targets))
+    {
         let target_id = member_id(target)?;
         if state_application_blocked(target, rule)? {
             results.push(status_effect_result(

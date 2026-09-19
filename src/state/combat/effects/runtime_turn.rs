@@ -9,6 +9,7 @@ use super::runtime_resources::{
     add_party_gauge, apply_burst_gauge_passive, apply_party_gauge_passive,
 };
 use super::runtime_results::{effect_result, status_effect_result, turn_state_change_result};
+use super::runtime_targeting::resolved_targets;
 use crate::state::combat::prelude::*;
 use std::collections::BTreeSet;
 
@@ -260,8 +261,7 @@ impl Runtime {
         self.trigger_panel_lamps(state, actor_id)?;
         let mut applied = BTreeSet::new();
         for passive in self.passives.iter().filter(|passive| {
-            passive.source == actor_id
-                && passive.rule.trigger.as_deref() == Some("panel_acquired")
+            passive.source == actor_id && passive.rule.trigger.as_deref() == Some("panel_acquired")
         }) {
             if !applied.insert((passive.source, passive.rule.owner_id, passive.rule.id)) {
                 continue;
@@ -332,8 +332,9 @@ impl Runtime {
         let mut triggered = Vec::new();
         let mut applied = BTreeSet::new();
         let passives = self.passives.clone();
-        for passive in passives.iter().filter(|passive| {
-            match passive.rule.trigger.as_deref() {
+        for passive in passives
+            .iter()
+            .filter(|passive| match passive.rule.trigger.as_deref() {
                 Some("action_after") => match passive.rule.target.as_str() {
                     "self" => passive.source == source_id,
                     "allies" => passive.source_type == source_type,
@@ -341,10 +342,12 @@ impl Runtime {
                 },
                 Some("party_action_after") => passive.source_type == source_type,
                 _ => false,
-            }
-        }) {
-            if matches!(passive.rule.operation.as_str(), "party_gauge" | "burst_gauge")
-                && !applied.insert((passive.source, passive.rule.owner_id, passive.rule.id))
+            })
+        {
+            if matches!(
+                passive.rule.operation.as_str(),
+                "party_gauge" | "burst_gauge"
+            ) && !applied.insert((passive.source, passive.rule.owner_id, passive.rule.id))
             {
                 continue;
             }
@@ -380,21 +383,17 @@ impl Runtime {
                     passive.rule.id,
                     passive.value,
                 )?),
-                "party_gauge" => {
-                    triggered.push(apply_party_gauge_passive(proto, state, &passive)?)
+                "party_gauge" => triggered.push(apply_party_gauge_passive(proto, state, &passive)?),
+                "burst_gauge" => {
+                    triggered.push(apply_burst_gauge_passive(proto, rules, state, &passive)?)
                 }
-                "burst_gauge" => triggered.push(apply_burst_gauge_passive(
-                    proto, rules, state, &passive,
-                )?),
                 _ => return Err(StateError::InvalidRequest),
             }
         }
-        if skill.skill_effect_type != 1 {
-            return Ok(triggered);
-        }
-        let hit_results = results
-            .iter()
-            .filter(|result| !bool_field(result, "is_miss") && !bool_field(result, "is_invalid"));
+        let attacking = skill.skill_effect_type == 1;
+        let hit_results = results.iter().filter(|result| {
+            attacking && !bool_field(result, "is_miss") && !bool_field(result, "is_invalid")
+        });
         let attacked = hit_results
             .clone()
             .filter_map(|result| i32_field(result, "target_id"))
@@ -444,21 +443,57 @@ impl Runtime {
             )?);
             *uses = uses.checked_add(1).ok_or(StateError::InvalidRequest)?;
         }
+        for passive in passives.iter().filter(|passive| {
+            passive.rule.target == "enemies"
+                && passive.rule.trigger.as_deref() == Some("attacked")
+                && attacked.contains(&passive.source)
+        }) {
+            let Some(passive_source) = members
+                .iter()
+                .find(|member| member_id(member).ok() == Some(passive.source))
+            else {
+                continue;
+            };
+            if !bool_field(passive_source, "is_alive")
+                || (!passive.rule.source_character_ids.is_empty()
+                    && !passive
+                        .rule
+                        .source_character_ids
+                        .contains(&passive.source_character_id))
+                || !condition(&passive.rule, passive_source)
+            {
+                continue;
+            }
+            let target_ids = members
+                .iter()
+                .filter(|member| {
+                    bool_field(member, "is_alive")
+                        && member_type(member)
+                            .ok()
+                            .is_some_and(|kind| kind != passive.source_type)
+                })
+                .filter_map(|member| member_id(member).ok())
+                .collect::<Vec<_>>();
+            triggered.extend(self.grant_triggered_modifier(
+                proto,
+                passive,
+                passive_source,
+                &members,
+                &target_ids,
+            )?);
+        }
         let critical = hit_results
             .clone()
             .any(|result| bool_field(result, "is_critical"));
         let mut refreshed_self = BTreeSet::new();
         for passive in passives.iter().filter(|passive| {
-            passive.source == source_id && passive.rule.trigger.as_deref() == Some("attack_after")
+            passive.source == source_id
+                && (passive.rule.trigger.as_deref() == Some("skill_after")
+                    || (attacking && passive.rule.trigger.as_deref() == Some("attack_after")))
         }) {
             if passive.rule.operation == "heal" {
                 if bool_field(source, "is_alive")
-                    && context_matches(
-                        &passive.rule,
-                        passive.source_character_id,
-                        skill,
-                        false,
-                    )
+                    && context_matches(&passive.rule, passive.source_character_id, skill, false)
                     && condition(&passive.rule, source)
                 {
                     triggered.extend(heal_self(
@@ -522,6 +557,41 @@ impl Runtime {
                 )?);
                 continue;
             }
+            if matches!(
+                passive.rule.target.as_str(),
+                "allies" | "enemies" | "highest_attack_ally" | "highest_magic_ally"
+            ) {
+                if !bool_field(source, "is_alive")
+                    || (!passive.rule.source_character_ids.is_empty()
+                        && !passive
+                            .rule
+                            .source_character_ids
+                            .contains(&passive.source_character_id))
+                    || !condition(&passive.rule, source)
+                {
+                    continue;
+                }
+                let requested = members
+                    .iter()
+                    .filter(|member| {
+                        bool_field(member, "is_alive")
+                            && member_type(member).ok().is_some_and(|member_type| {
+                                (passive.rule.target == "enemies") == (member_type != source_type)
+                            })
+                    })
+                    .filter_map(|member| member_id(member).ok())
+                    .collect::<Vec<_>>();
+                let target_ids =
+                    resolved_targets(&passive.rule, source, &members, None, &requested)?;
+                triggered.extend(self.grant_triggered_modifier(
+                    proto,
+                    passive,
+                    source,
+                    &members,
+                    &target_ids,
+                )?);
+                continue;
+            }
             for result in hit_results.clone() {
                 let Some(target_id) = i32_field(result, "target_id") else {
                     continue;
@@ -578,9 +648,11 @@ impl Runtime {
                 )?);
             }
         }
-        triggered.extend(self.apply_critical_skill_effects(
-            proto, rules, state, source_id, skill, results,
-        )?);
+        if attacking {
+            triggered.extend(
+                self.apply_critical_skill_effects(proto, rules, state, source_id, skill, results)?,
+            );
+        }
         self.refresh(proto, state)?;
         Ok(triggered)
     }

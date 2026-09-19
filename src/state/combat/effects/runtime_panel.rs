@@ -16,10 +16,7 @@ pub(super) fn scale_panel_value(value: i32, rate: i128) -> i32 {
 }
 
 impl Runtime {
-    pub(super) fn effective_panel_id(
-        &self,
-        state: &DynamicMessage,
-    ) -> Result<i32, StateError> {
+    pub(super) fn effective_panel_id(&self, state: &DynamicMessage) -> Result<i32, StateError> {
         let panel_id = current_panel_id(state);
         let actor_id = member_id(&current_actor(state)?)?;
         if self.instances.iter().any(|instance| {

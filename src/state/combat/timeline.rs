@@ -867,7 +867,10 @@ fn shift_timeline_member_by_slots(
         .map(|unit| i32_field(unit, "wait").ok_or(StateError::InvalidRequest))
         .collect::<Result<Vec<_>, _>>()?;
     let insertion_index = if advance {
-        first_index.saturating_sub(slots).max(1).min(other_waits.len())
+        first_index
+            .saturating_sub(slots)
+            .max(1)
+            .min(other_waits.len())
     } else {
         first_index.saturating_add(slots).min(other_waits.len())
     };

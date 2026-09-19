@@ -55,22 +55,13 @@ fn skill_damage_curves_follow_live_count_hp_and_direction() {
         scaled_skill_damage(skill(11000301), &source, 1).unwrap(),
         1_000
     );
-    assert_eq!(
-        scaled_skill_damage(skill(11000301), &source, 2).unwrap(),
-        0
-    );
+    assert_eq!(scaled_skill_damage(skill(11000301), &source, 2).unwrap(), 0);
     assert_eq!(
         scaled_skill_damage(skill(14000315), &source, 1).unwrap(),
         4_000
     );
-    assert_eq!(
-        scaled_skill_damage(skill(12003210), &source, 1).unwrap(),
-        0
-    );
-    assert_eq!(
-        scaled_skill_damage(skill(14003215), &source, 1).unwrap(),
-        0
-    );
+    assert_eq!(scaled_skill_damage(skill(12003210), &source, 1).unwrap(), 0);
+    assert_eq!(scaled_skill_damage(skill(14003215), &source, 1).unwrap(), 0);
     assert_eq!(
         scaled_skill_damage(skill(11000511), &source, 1).unwrap(),
         500
@@ -104,31 +95,15 @@ fn skill_damage_curves_follow_live_count_hp_and_direction() {
         10_000
     );
     let mut critical_skill = skill(12002546).clone();
-    critical_skill.effects.retain(|effect| effect.id == 91001616);
+    critical_skill
+        .effects
+        .retain(|effect| effect.id == 91001616);
     assert_eq!(
-        secondary_damage(
-            15_000,
-            &source,
-            &source,
-            &critical_skill,
-            None,
-            1,
-            true,
-        )
-        .unwrap(),
+        secondary_damage(15_000, &source, &source, &critical_skill, None, 1, true,).unwrap(),
         33_000
     );
     assert_eq!(
-        secondary_damage(
-            15_000,
-            &source,
-            &source,
-            &critical_skill,
-            None,
-            4,
-            true,
-        )
-        .unwrap(),
+        secondary_damage(15_000, &source, &source, &critical_skill, None, 4, true,).unwrap(),
         21_000
     );
     assert_eq!(
@@ -169,8 +144,7 @@ fn skill_damage_curves_follow_live_count_hp_and_direction() {
             .iter()
             .take(count)
             .map(|state_id| {
-                let mut change =
-                    empty_message(&proto, "blend.model.BattleStateChange").unwrap();
+                let mut change = empty_message(&proto, "blend.model.BattleStateChange").unwrap();
                 change.set_field_by_name("state_change_id", Value::I32(*state_id));
                 Value::Message(change)
             })
@@ -267,17 +241,11 @@ fn granted_buffs_scale_with_live_opponent_count() {
             ("allies", summary, &Expiry::Turn, 1, "opponent_count")
         );
         assert_eq!(
-            super::super::runtime_scaling::scaled_effect_value(
-                rule, &source, 1, minimum,
-            )
-            .unwrap(),
+            super::super::runtime_scaling::scaled_effect_value(rule, &source, 1, minimum,).unwrap(),
             minimum
         );
         assert_eq!(
-            super::super::runtime_scaling::scaled_effect_value(
-                rule, &source, 4, minimum,
-            )
-            .unwrap(),
+            super::super::runtime_scaling::scaled_effect_value(rule, &source, 4, minimum,).unwrap(),
             maximum
         );
     }
@@ -370,13 +338,9 @@ fn received_damage_buffs_scale_with_tagged_party_members() {
             .collect::<Vec<_>>();
         members.push(member(20, untagged, 0));
         members.push(member(21, tagged[5], 1));
-        let actual = super::super::runtime_scaling::party_tag_count(
-            &rules,
-            &members,
-            &members[0],
-            tag_id,
-        )
-        .unwrap();
+        let actual =
+            super::super::runtime_scaling::party_tag_count(&rules, &members, &members[0], tag_id)
+                .unwrap();
         assert_eq!(actual, count as i32);
         assert_eq!(
             super::super::runtime_scaling::scaled_effect_value(

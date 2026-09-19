@@ -193,7 +193,10 @@ fn extra_turn_rules_preserve_conditions_and_activation_limits() {
             super::super::runtime_results::level_display(&proto, 510319, 9, -1).unwrap(),
         )]),
     );
-    assert!(!super::super::runtime_match::condition(conditional, &source));
+    assert!(!super::super::runtime_match::condition(
+        conditional,
+        &source
+    ));
     source.set_field_by_name(
         "state_changes",
         Value::List(vec![Value::Message(

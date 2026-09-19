@@ -27,9 +27,9 @@ impl Runtime {
         }
         let mut effects = Vec::new();
         for effect in &skill.effects {
-            if rule_for(effect.id, "active", "skill", skill.id)?.is_some_and(|rule| {
-                rule.critical_only && rule.phase == "after"
-            }) {
+            if rule_for(effect.id, "active", "skill", skill.id)?
+                .is_some_and(|rule| rule.critical_only && rule.phase == "after")
+            {
                 effects.push(effect.clone());
             }
         }

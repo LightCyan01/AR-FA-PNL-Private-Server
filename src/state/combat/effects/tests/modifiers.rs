@@ -157,9 +157,7 @@ fn granted_weak_damage_buffs_keep_their_future_attack_scope() {
                 rule.weak_only,
                 rule.stack_cap,
             ),
-            (
-                "summary", 1, target, "after", &expiry, duration, true, stack_cap
-            )
+            ("summary", 1, target, "after", &expiry, duration, true, stack_cap)
         );
     }
 }
@@ -417,7 +415,11 @@ fn common_active_modifiers_change_only_their_declared_buckets() {
             .unwrap()
             .unwrap();
         assert_eq!(
-            (rule.operation.as_str(), rule.summary, rule.condition.get("hp_min")),
+            (
+                rule.operation.as_str(),
+                rule.summary,
+                rule.condition.get("hp_min")
+            ),
             ("summary", 1, Some(&minimum))
         );
     }
@@ -449,15 +451,17 @@ fn common_active_modifiers_change_only_their_declared_buckets() {
         ),
         ("summary", 17, "targets", &Expiry::Attacked, 2, true)
     );
-    for (effect_id, skill_id, duration) in [
-        (780046019, 20007532, 3),
-        (780042011, 22002049, 10),
-    ] {
+    for (effect_id, skill_id, duration) in [(780046019, 20007532, 3), (780042011, 22002049, 10)] {
         let rule = rule_for(effect_id, "active", "skill", skill_id)
             .unwrap()
             .unwrap();
         assert_eq!(
-            (rule.operation.as_str(), rule.summary, &rule.expiry, rule.duration),
+            (
+                rule.operation.as_str(),
+                rule.summary,
+                &rule.expiry,
+                rule.duration
+            ),
             ("summary", 11, &Expiry::Attacked, duration)
         );
     }
@@ -517,11 +521,7 @@ fn common_active_modifiers_change_only_their_declared_buckets() {
             ("summary", 6, target, 1, &Expiry::Turn, 2)
         );
     }
-    for (skill_id, target) in [
-        (32002564, "allies"),
-        (32004927, "self"),
-        (32005031, "self"),
-    ] {
+    for (skill_id, target) in [(32002564, "allies"), (32004927, "self"), (32005031, "self")] {
         let critical_rate_up = rule_for(71153004, "active", "skill", skill_id)
             .unwrap()
             .unwrap();
@@ -536,10 +536,7 @@ fn common_active_modifiers_change_only_their_declared_buckets() {
             (target, 6, 1, &Expiry::Turn, 1)
         );
     }
-    for (effect_id, skill_id) in [
-        (71212004, 22001466),
-        (780048001, 20001686),
-    ] {
+    for (effect_id, skill_id) in [(71212004, 22001466), (780048001, 20001686)] {
         assert!(rule_for(effect_id, "active", "skill", skill_id)
             .unwrap()
             .is_none());

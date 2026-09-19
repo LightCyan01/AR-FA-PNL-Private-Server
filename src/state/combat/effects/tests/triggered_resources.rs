@@ -97,16 +97,10 @@ fn triggered_item_gauge_rules_follow_their_catalog_events() {
         .find(|skill| skill.skill_effect_type == 1)
         .unwrap();
     let passive = |effect_id, ability_id, owner_index, value| {
-        let rule = rule_for_occurrence(
-            effect_id,
-            "passive",
-            "ability",
-            ability_id,
-            owner_index,
-        )
-        .unwrap()
-        .unwrap()
-        .clone();
+        let rule = rule_for_occurrence(effect_id, "passive", "ability", ability_id, owner_index)
+            .unwrap()
+            .unwrap()
+            .clone();
         Passive {
             source: actor_id,
             value,
@@ -164,7 +158,14 @@ fn triggered_item_gauge_rules_follow_their_catalog_events() {
     );
     runtime.passives = vec![passive(500050, 500442, Some(0), 500)];
     let first = runtime
-        .trigger_attack_after(&proto, &rules, &mut state, actor_id, skill, &[attacked.clone()])
+        .trigger_attack_after(
+            &proto,
+            &rules,
+            &mut state,
+            actor_id,
+            skill,
+            &[attacked.clone()],
+        )
         .unwrap();
     let first_hp = message_list(&state, "members")
         .into_iter()
@@ -278,16 +279,10 @@ fn shared_burst_gauge_rules_follow_events_without_duplicate_gains() {
     let passive = |effect_id, ability_id, owner_index, value| Passive {
         source: actor_id,
         value,
-        rule: rule_for_occurrence(
-            effect_id,
-            "passive",
-            "ability",
-            ability_id,
-            owner_index,
-        )
-        .unwrap()
-        .unwrap()
-        .clone(),
+        rule: rule_for_occurrence(effect_id, "passive", "ability", ability_id, owner_index)
+            .unwrap()
+            .unwrap()
+            .clone(),
         source_character_id: 0,
         source_type: actor_type,
     };
@@ -406,7 +401,14 @@ fn party_tool_modifier_requires_its_named_character_and_expires_with_the_rule() 
             rule.duration,
             rule.source_character_ids.as_slice(),
         ),
-        ("summary", 4, Some("party_tool_after"), &Expiry::Turn, 1, [60101].as_slice())
+        (
+            "summary",
+            4,
+            Some("party_tool_after"),
+            &Expiry::Turn,
+            1,
+            [60101].as_slice()
+        )
     );
     assert_eq!(
         rule_for(6001207, "catalog", "skill", 3020)

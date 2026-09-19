@@ -14,7 +14,10 @@ fn initiative_delays_every_non_initiative_opening_turn() {
         .unwrap()
         .unwrap()
         .clone();
-    assert_eq!((rule.operation.as_str(), rule.target.as_str()), ("initiative", "self"));
+    assert_eq!(
+        (rule.operation.as_str(), rule.target.as_str()),
+        ("initiative", "self")
+    );
 
     let mut runtime = Runtime::default();
     runtime.passives.push(Passive {

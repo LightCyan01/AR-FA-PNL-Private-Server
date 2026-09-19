@@ -188,7 +188,10 @@ fn observed_master_damage_passives_apply_once() {
     boosted_member.set_field_by_name("member_id", Value::I32(boosted));
     targeting_state.set_field_by_name(
         "members",
-        Value::List(vec![Value::Message(first_member), Value::Message(boosted_member)]),
+        Value::List(vec![
+            Value::Message(first_member),
+            Value::Message(boosted_member),
+        ]),
     );
     let mut targeting = Runtime::default();
     targeting.passives.push(Passive {
@@ -365,10 +368,7 @@ fn conditional_memoria_and_equipment_follow_attack_context() {
     );
     let mut poison = empty_message(&proto, "blend.model.BattleStateChange").unwrap();
     poison.set_field_by_name("state_change_id", Value::I32(940007));
-    enemy.set_field_by_name(
-        "state_changes",
-        Value::List(vec![Value::Message(poison)]),
-    );
+    enemy.set_field_by_name("state_changes", Value::List(vec![Value::Message(poison)]));
     assert_eq!(
         contextual.contextual_summary_against(&actor(), Some(&enemy), &physical, false, 3),
         500
@@ -465,13 +465,7 @@ fn conditional_memoria_and_equipment_follow_attack_context() {
             rule: negative_rule.clone(),
         });
     assert_eq!(
-        negative_runtime.contextual_summary_against(
-            &actor(),
-            Some(&enemy),
-            &physical,
-            false,
-            1,
-        ),
+        negative_runtime.contextual_summary_against(&actor(), Some(&enemy), &physical, false, 1,),
         0
     );
     assert_eq!(
@@ -519,13 +513,7 @@ fn conditional_memoria_and_equipment_follow_attack_context() {
             rule: abnormal_rule.clone(),
         });
     assert_eq!(
-        abnormal_runtime.contextual_summary_against(
-            &actor(),
-            Some(&enemy),
-            &physical,
-            false,
-            1,
-        ),
+        abnormal_runtime.contextual_summary_against(&actor(), Some(&enemy), &physical, false, 1,),
         2_500
     );
 

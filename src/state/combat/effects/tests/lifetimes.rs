@@ -44,10 +44,9 @@ fn mirrored_received_damage_debuffs_keep_owner_specific_hit_counts() {
 
 #[test]
 fn compound_evasion_skills_bind_only_the_evasion_effect() {
-    for (effect_id, skill_id, target) in [
-        (91001209, 12002705, "self"),
-        (91001674, 14002500, "allies"),
-    ] {
+    for (effect_id, skill_id, target) in
+        [(91001209, 12002705, "self"), (91001674, 14002500, "allies")]
+    {
         let rule = rule_for(effect_id, "active", "skill", skill_id)
             .unwrap()
             .unwrap();

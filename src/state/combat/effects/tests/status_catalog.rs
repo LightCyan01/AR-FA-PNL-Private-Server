@@ -131,10 +131,7 @@ fn all_attribute_resistance_up_covers_every_owner() {
 
 #[test]
 fn received_attribute_damage_uses_the_target_multiplier() {
-    for (effect_id, attribute, state_id) in [
-        (91001658, 5, 50006),
-        (91001645, 2, 50011),
-    ] {
+    for (effect_id, attribute, state_id) in [(91001658, 5, 50006), (91001645, 2, 50011)] {
         let rule = rule_for(effect_id, "active", "skill", 12002406)
             .unwrap()
             .unwrap();

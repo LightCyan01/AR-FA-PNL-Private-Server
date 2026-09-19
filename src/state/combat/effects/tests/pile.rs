@@ -99,8 +99,16 @@ fn pile_grants_scales_and_is_consumed_by_fortress() {
         .find(|member| member_type(member).ok() == Some(1))
         .and_then(|member| i32_field(member, "member_id"))
         .unwrap();
-    let crusade = rules.skills.iter().find(|skill| skill.id == 12002406).unwrap();
-    let fortress = rules.skills.iter().find(|skill| skill.id == 12002561).unwrap();
+    let crusade = rules
+        .skills
+        .iter()
+        .find(|skill| skill.id == 12002406)
+        .unwrap();
+    let fortress = rules
+        .skills
+        .iter()
+        .find(|skill| skill.id == 12002561)
+        .unwrap();
     let initial_attack_rate = runtime.stat_rate(actor_id, "attack");
     assert_eq!(
         instant_summary_for_source(
@@ -132,10 +140,15 @@ fn pile_grants_scales_and_is_consumed_by_fortress() {
             1,
         )
         .unwrap();
-    assert_eq!(runtime.stat_rate(actor_id, "attack"), initial_attack_rate + 5_000);
-    assert!(message_list(&battle_member(&state, actor_id), "state_changes")
-        .iter()
-        .any(|change| i32_field(change, "state_change_id") == Some(610228)));
+    assert_eq!(
+        runtime.stat_rate(actor_id, "attack"),
+        initial_attack_rate + 5_000
+    );
+    assert!(
+        message_list(&battle_member(&state, actor_id), "state_changes")
+            .iter()
+            .any(|change| i32_field(change, "state_change_id") == Some(610228))
+    );
     assert_eq!(
         instant_summary_for_source(
             Some(&battle_member(&state, actor_id)),
@@ -175,10 +188,15 @@ fn pile_grants_scales_and_is_consumed_by_fortress() {
             .any(|instance| instance.rule.id == effect_id && instance.value == value));
     }
     assert_eq!(runtime.stat_rate(actor_id, "attack"), initial_attack_rate);
-    assert!(!runtime.instances.iter().any(|instance| instance.rule.state_id == 610228));
-    assert!(!message_list(&battle_member(&state, actor_id), "state_changes")
+    assert!(!runtime
+        .instances
         .iter()
-        .any(|change| i32_field(change, "state_change_id") == Some(610228)));
+        .any(|instance| instance.rule.state_id == 610228));
+    assert!(
+        !message_list(&battle_member(&state, actor_id), "state_changes")
+            .iter()
+            .any(|change| i32_field(change, "state_change_id") == Some(610228))
+    );
     assert_eq!(
         instant_summary_for_source(
             Some(&battle_member(&state, actor_id)),

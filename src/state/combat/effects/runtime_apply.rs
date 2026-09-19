@@ -8,10 +8,10 @@ use super::runtime_match::{
     amount, condition, contextual_recipient, selected, selected_for_source_character,
     selected_with_condition_target, state_application_blocked,
 };
+use super::runtime_resources::{add_burst_gauge, add_party_gauge};
 use super::runtime_results::{
     display, effect_result, level_display, status_display, status_effect_result,
 };
-use super::runtime_resources::{add_burst_gauge, add_party_gauge};
 use super::runtime_scaling::{party_tag_count, scaled_effect_value};
 use super::runtime_targeting::resolved_targets;
 use crate::state::combat::prelude::*;
@@ -170,14 +170,8 @@ impl Runtime {
             .clone();
         let mut results = Vec::new();
         for (effect_index, effect) in effects.iter().enumerate() {
-            if rule_for_occurrence(
-                effect.id,
-                "catalog",
-                "skill",
-                skill_id,
-                Some(effect_index),
-            )?
-            .is_some()
+            if rule_for_occurrence(effect.id, "catalog", "skill", skill_id, Some(effect_index))?
+                .is_some()
             {
                 continue;
             }
@@ -205,13 +199,8 @@ impl Runtime {
                     effect_index,
                 )?);
             }
-            let Some(base_rule) = rule_for_occurrence(
-                effect.id,
-                "active",
-                "skill",
-                skill_id,
-                Some(effect_index),
-            )?
+            let Some(base_rule) =
+                rule_for_occurrence(effect.id, "active", "skill", skill_id, Some(effect_index))?
             else {
                 if !has_nested_rule
                     && rule_for_occurrence(
@@ -273,9 +262,9 @@ impl Runtime {
             let rule = &effective_rule;
             let weak_triggered = if rule.operation == "panel_convert" && rule.weak_only {
                 let skill = rule_skill(rules.ok_or(StateError::InvalidRequest)?, skill_id)?;
-                targets.iter().try_fold(
-                    false,
-                    |weak, target_id| -> Result<bool, StateError> {
+                targets
+                    .iter()
+                    .try_fold(false, |weak, target_id| -> Result<bool, StateError> {
                         let target = members
                             .iter()
                             .find(|member| member_id(member).ok() == Some(*target_id))
@@ -285,8 +274,7 @@ impl Runtime {
                                 target,
                                 preferred_attack_attribute(target, skill)?,
                             )? < 0)
-                    },
-                )?
+                    })?
             } else {
                 true
             };
@@ -324,7 +312,8 @@ impl Runtime {
                         .ok()
                         .is_some_and(|enemy| bool_field(&enemy, "is_broken"))
             });
-            let resolved_targets = resolved_targets(rule, &source, &members, panel_context, targets)?;
+            let resolved_targets =
+                resolved_targets(rule, &source, &members, panel_context, targets)?;
             let targets = resolved_targets.as_slice();
             if rule.operation == "skill_form" {
                 results.push(apply_skill_form(
@@ -377,7 +366,15 @@ impl Runtime {
                     continue;
                 }
                 results.extend(self.convert_panels(
-                    proto, state, &source, &members, targets, effect, is_skill, rule, panel_context,
+                    proto,
+                    state,
+                    &source,
+                    &members,
+                    targets,
+                    effect,
+                    is_skill,
+                    rule,
+                    panel_context,
                 )?);
                 continue;
             }
@@ -408,6 +405,23 @@ impl Runtime {
                     is_skill,
                     rule,
                     value,
+                    secret,
+                    transaction,
+                    action_number,
+                )?);
+                continue;
+            }
+            if rule.operation == "random_level_state" {
+                let (secret, transaction, action_number) = rng.ok_or(StateError::InvalidRequest)?;
+                results.extend(self.apply_random_level_state(
+                    proto,
+                    &members,
+                    &source,
+                    source_id,
+                    effect,
+                    targets,
+                    is_skill,
+                    rule,
                     secret,
                     transaction,
                     action_number,
@@ -592,12 +606,7 @@ impl Runtime {
                                     previous.remaining,
                                 )?
                             } else {
-                                display(
-                                    proto,
-                                    rule.state_id,
-                                    previous.value,
-                                    previous.remaining,
-                                )?
+                                display(proto, rule.state_id, previous.value, previous.remaining)?
                             };
                             result.set_field_by_name(
                                 "removed_state_changes",
@@ -614,9 +623,7 @@ impl Runtime {
                                 });
                                 members[target_index].set_field_by_name(
                                     "state_changes",
-                                    Value::List(
-                                        changes.into_iter().map(Value::Message).collect(),
-                                    ),
+                                    Value::List(changes.into_iter().map(Value::Message).collect()),
                                 );
                                 self.managed
                                     .entry(target_id)
@@ -668,9 +675,7 @@ impl Runtime {
                     let mut changes = message_list(&members[target_index], "state_changes");
                     changes.retain(|change| {
                         if removed.len() < limit
-                            && can_remove(
-                                i32_field(change, "state_change_id").unwrap_or_default(),
-                            )
+                            && can_remove(i32_field(change, "state_change_id").unwrap_or_default())
                         {
                             removed.push(Value::Message(change.clone()));
                             false
@@ -752,7 +757,9 @@ impl Runtime {
                     let condition_target = condition_members
                         .as_ref()
                         .and_then(|context| {
-                            context.iter().find(|member| member_id(member).ok() == Some(target_id))
+                            context
+                                .iter()
+                                .find(|member| member_id(member).ok() == Some(target_id))
                         })
                         .unwrap_or(&members[target_index]);
                     if !selected_with_condition_target(
@@ -777,42 +784,37 @@ impl Runtime {
                         .and_then(|row| i32_field(row, "value"))
                         .unwrap_or_default()
                         .saturating_mul(100);
-                    let runtime_resistance = if registry()?.abnormal_state_ids.contains(&rule.state_id)
-                    {
-                        let applies = |candidate: &Rule| {
-                            candidate.affected_state_ids.is_empty()
-                                || candidate.affected_state_ids.contains(&rule.state_id)
+                    let runtime_resistance =
+                        if registry()?.abnormal_state_ids.contains(&rule.state_id) {
+                            let applies = |candidate: &Rule| {
+                                candidate.affected_state_ids.is_empty()
+                                    || candidate.affected_state_ids.contains(&rule.state_id)
+                            };
+                            let active = self
+                                .instances
+                                .iter()
+                                .filter(|instance| {
+                                    instance.target == target_id
+                                        && instance.rule.operation == "abnormal_resistance"
+                                        && applies(&instance.rule)
+                                })
+                                .fold(0i32, |total, instance| total.saturating_add(instance.value));
+                            self.passives
+                                .iter()
+                                .filter(|passive| {
+                                    passive.rule.operation == "abnormal_resistance"
+                                        && applies(&passive.rule)
+                                        && contextual_recipient(passive, &members[target_index])
+                                        && members.iter().any(|source| {
+                                            i32_field(source, "member_id") == Some(passive.source)
+                                                && bool_field(source, "is_alive")
+                                                && condition(&passive.rule, source)
+                                        })
+                                })
+                                .fold(active, |total, passive| total.saturating_add(passive.value))
+                        } else {
+                            0
                         };
-                        let active = self
-                            .instances
-                            .iter()
-                            .filter(|instance| {
-                                instance.target == target_id
-                                    && instance.rule.operation == "abnormal_resistance"
-                                    && applies(&instance.rule)
-                            })
-                            .fold(0i32, |total, instance| total.saturating_add(instance.value));
-                        self.passives
-                            .iter()
-                            .filter(|passive| {
-                                passive.rule.operation == "abnormal_resistance"
-                                    && applies(&passive.rule)
-                                    && contextual_recipient(
-                                        passive,
-                                        &members[target_index],
-                                    )
-                                    && members.iter().any(|source| {
-                                        i32_field(source, "member_id") == Some(passive.source)
-                                            && bool_field(source, "is_alive")
-                                            && condition(&passive.rule, source)
-                                    })
-                            })
-                            .fold(active, |total, passive| {
-                                total.saturating_add(passive.value)
-                            })
-                    } else {
-                        0
-                    };
                     let chance = application_rate
                         .saturating_sub(resistance_rate)
                         .saturating_sub(runtime_resistance)
@@ -918,7 +920,8 @@ impl Runtime {
                                 && instance.target == target_id
                                 && instance.rule.id == rule.id
                         })
-                        .count() >= rule.stack_limit
+                        .count()
+                        >= rule.stack_limit
                 {
                     continue;
                 }
@@ -944,11 +947,12 @@ impl Runtime {
                 };
                 if rule.stack_limit == 0 {
                     self.instances.retain(|instance| {
-                        !(instance.target == target_id && if rule.operation == "panel_potency" {
-                            instance.rule.operation == "panel_potency"
-                        } else {
-                            instance.source == source_id && instance.rule.id == rule.id
-                        })
+                        !(instance.target == target_id
+                            && if rule.operation == "panel_potency" {
+                                instance.rule.operation == "panel_potency"
+                            } else {
+                                instance.source == source_id && instance.rule.id == rule.id
+                            })
                     });
                 }
                 let source_character_id =

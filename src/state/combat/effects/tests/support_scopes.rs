@@ -22,7 +22,10 @@ fn attribute_or_tag_support_buffs_apply_each_modifier_once() {
         fire_magic.target_character_ids,
         fire_damage.target_character_ids
     );
-    assert_eq!(tag_magic.target_character_ids, tag_damage.target_character_ids);
+    assert_eq!(
+        tag_magic.target_character_ids,
+        tag_damage.target_character_ids
+    );
     assert_eq!(tag_magic.target_character_ids, [50201, 50301, 50501]);
     assert!(fire_magic
         .target_character_ids
@@ -44,7 +47,10 @@ fn attribute_or_tag_support_buffs_apply_each_modifier_once() {
         impact_defense.target_character_ids,
         impact_mental.target_character_ids
     );
-    assert_eq!(tag_defense.target_character_ids, tag_mental.target_character_ids);
+    assert_eq!(
+        tag_defense.target_character_ids,
+        tag_mental.target_character_ids
+    );
     assert_eq!(tag_defense.target_character_ids, [50101, 50401, 50601]);
     assert!(impact_defense
         .target_character_ids
@@ -69,7 +75,10 @@ fn attribute_or_tag_support_buffs_apply_each_modifier_once() {
             lightning_critical.target_character_ids,
             lightning_item.target_character_ids
         );
-        assert_eq!(tag_critical.target_character_ids, tag_item.target_character_ids);
+        assert_eq!(
+            tag_critical.target_character_ids,
+            tag_item.target_character_ids
+        );
         assert!(lightning_critical
             .target_character_ids
             .iter()
@@ -341,7 +350,10 @@ fn common_support_effects_keep_their_scope_and_conditions() {
         message_i32_field(source, "current_status", "attack"),
         Some(120)
     );
-    assert_eq!(message_i32_field(ally, "current_status", "magic"), Some(300));
+    assert_eq!(
+        message_i32_field(ally, "current_status", "magic"),
+        Some(300)
+    );
     assert_eq!(incoming_multiplier_with_runtime(source, 1, None), 8_000);
     assert_eq!(incoming_multiplier_with_runtime(ally, 1, None), 2_000);
 

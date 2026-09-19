@@ -8,6 +8,8 @@ mod policy;
 mod registry;
 mod runtime;
 mod runtime_apply;
+mod runtime_battle_tool_party;
+mod runtime_chip;
 mod runtime_cover;
 mod runtime_critical;
 mod runtime_extra_turn;
@@ -21,8 +23,8 @@ mod runtime_panel;
 mod runtime_potency;
 mod runtime_random;
 mod runtime_reflection;
-mod runtime_results;
 mod runtime_resources;
+mod runtime_results;
 mod runtime_scaling;
 mod runtime_summary;
 mod runtime_targeting;
@@ -44,6 +46,7 @@ pub(crate) use runtime::{Passive, PendingAction, Runtime};
 pub(crate) use runtime_cover::Protection;
 pub(crate) use runtime_lamp::{advance_skill_lamp, predicted_skill_lamp, skill_transformation};
 pub(crate) use runtime_match::selected;
+pub(crate) use runtime_resources::add_party_gauge;
 pub(crate) use runtime_results::display;
 pub(crate) use runtime_scaling::{
     scaled_break_damage, scaled_critical_damage, scaled_skill_damage,

@@ -12,7 +12,15 @@ fn summary(state: &DynamicMessage, member_id: i32, summary: i32) -> i32 {
 #[test]
 fn critical_skill_modifiers_apply_only_after_critical_hits() {
     for (effect_id, skill_id, operation, summary, expiry, duration, cap) in [
-        (91001334, 12001624, "summary", 1, Expiry::Permanent, -1, 10_000),
+        (
+            91001334,
+            12001624,
+            "summary",
+            1,
+            Expiry::Permanent,
+            -1,
+            10_000,
+        ),
         (91001480, 12002124, "magic", 0, Expiry::Turn, 2, 0),
         (91001565, 12002234, "attack", 0, Expiry::Turn, 1, 0),
     ] {
@@ -57,7 +65,11 @@ fn critical_skill_modifiers_apply_only_after_critical_hits() {
         .find(|member| member_type(member).ok() == Some(1))
         .and_then(|member| i32_field(member, "member_id"))
         .unwrap();
-    let skill = rules.skills.iter().find(|skill| skill.id == 12001624).unwrap();
+    let skill = rules
+        .skills
+        .iter()
+        .find(|skill| skill.id == 12001624)
+        .unwrap();
     let mut runtime = Runtime::default();
     runtime.prepare(&state, "critical-trigger").unwrap();
     let initial = summary(&state, actor_id, 1);

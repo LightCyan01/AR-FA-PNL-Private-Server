@@ -87,9 +87,7 @@ fn scaled_skill_modifier(
         if rule.operation != "skill_damage_scale" || rule.summary != summary {
             return Ok(total);
         }
-        if rule.scale_by == "opponent_count"
-            && rule.scale_input_min == rule.scale_input_max
-        {
+        if rule.scale_by == "opponent_count" && rule.scale_input_min == rule.scale_input_max {
             return Ok(if opponent_count == rule.scale_input_min {
                 total.saturating_add(i64::from(effect.value))
             } else {
@@ -104,7 +102,10 @@ fn scaled_skill_modifier(
                     .condition
                     .get("party_tag_id")
                     .ok_or(StateError::InvalidRequest)?;
-                (i64::from(party_tag_count(rules, members, source, tag_id)?), 1)
+                (
+                    i64::from(party_tag_count(rules, members, source, tag_id)?),
+                    1,
+                )
             }
             "source_hp" => (
                 i64::from(i32_field(source, "hp").unwrap_or_default().max(0)) * 100,

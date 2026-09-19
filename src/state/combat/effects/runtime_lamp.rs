@@ -42,13 +42,10 @@ pub(crate) fn predicted_skill_lamp(
 }
 
 pub(super) fn is_lamp_mechanic(skill_id: i32, effect_id: i32) -> Result<bool, StateError> {
-    Ok(registry()?
-        .lamp_skills
-        .get(&skill_id)
-        .is_some_and(|rule| {
-            rule.mechanic_effect_ids.contains(&effect_id)
-                || rule.consumed_effect_ids.contains(&effect_id)
-        }))
+    Ok(registry()?.lamp_skills.get(&skill_id).is_some_and(|rule| {
+        rule.mechanic_effect_ids.contains(&effect_id)
+            || rule.consumed_effect_ids.contains(&effect_id)
+    }))
 }
 
 pub(super) fn lamp_condition_matches(
@@ -236,7 +233,13 @@ impl Runtime {
                     .ok_or(StateError::InvalidRequest)?;
                 add_lamp(state, *source_id, rule, rule.start)?;
                 if rule.start_heal > 0 {
-                    heal_all(proto, state, *source_id, rule.heal_effect_id, rule.start_heal)?;
+                    heal_all(
+                        proto,
+                        state,
+                        *source_id,
+                        rule.heal_effect_id,
+                        rule.start_heal,
+                    )?;
                 }
             }
         }
@@ -296,9 +299,12 @@ impl Runtime {
             }
         }
         let mut applied = BTreeSet::new();
-        let passives = self.passives.iter().filter(|passive| {
-            passive.rule.trigger.as_deref() == Some("party_tool_after")
-        }).cloned().collect::<Vec<_>>();
+        let passives = self
+            .passives
+            .iter()
+            .filter(|passive| passive.rule.trigger.as_deref() == Some("party_tool_after"))
+            .cloned()
+            .collect::<Vec<_>>();
         let members = message_list(state, "members");
         let mut refresh = false;
         for passive in &passives {
@@ -323,8 +329,7 @@ impl Runtime {
             if matches!(
                 passive.rule.operation.as_str(),
                 "summary" | "party_gauge" | "burst_gauge"
-            )
-                && !applied.insert((passive.source, passive.rule.owner_id, passive.rule.id))
+            ) && !applied.insert((passive.source, passive.rule.owner_id, passive.rule.id))
             {
                 continue;
             }
@@ -336,12 +341,10 @@ impl Runtime {
                     passive.rule.id,
                     passive.value,
                 )?),
-                "party_gauge" => {
-                    results.push(apply_party_gauge_passive(proto, state, passive)?)
+                "party_gauge" => results.push(apply_party_gauge_passive(proto, state, passive)?),
+                "burst_gauge" => {
+                    results.push(apply_burst_gauge_passive(proto, rules, state, passive)?)
                 }
-                "burst_gauge" => results.push(apply_burst_gauge_passive(
-                    proto, rules, state, passive,
-                )?),
                 "summary" => {
                     self.instances.retain(|instance| {
                         !(instance.source == passive.source
@@ -420,56 +423,56 @@ impl Runtime {
                 {
                     Some("action_after")
                 } else if rule
-                        .triggers
-                        .iter()
-                        .any(|trigger| trigger == "heal_received")
-                        && valid_results.iter().any(|result| {
-                            i32_field(result, "target_id") == Some(*source_id)
-                                && message_i32_field(result, "hp_heal", "value").unwrap_or(0) > 0
-                        })
+                    .triggers
+                    .iter()
+                    .any(|trigger| trigger == "heal_received")
+                    && valid_results.iter().any(|result| {
+                        i32_field(result, "target_id") == Some(*source_id)
+                            && message_i32_field(result, "hp_heal", "value").unwrap_or(0) > 0
+                    })
                 {
                     Some("heal_received")
                 } else if skill.skill_effect_type == 1
-                        && rule.triggers.iter().any(|trigger| trigger == "attacked")
-                        && valid_results
-                            .iter()
-                            .any(|result| i32_field(result, "target_id") == Some(*source_id))
+                    && rule.triggers.iter().any(|trigger| trigger == "attacked")
+                    && valid_results
+                        .iter()
+                        .any(|result| i32_field(result, "target_id") == Some(*source_id))
                 {
                     Some("attacked")
                 } else if is_skill
-                        && *source_id == actor_id
-                        && rule
-                            .triggers
-                            .iter()
-                            .any(|trigger| trigger == "weak_attack_after")
-                        && rule.trigger_skill_ids.contains(&skill.id)
-                        && valid_results
-                            .iter()
-                            .any(|result| bool_field(result, "is_weak"))
+                    && *source_id == actor_id
+                    && rule
+                        .triggers
+                        .iter()
+                        .any(|trigger| trigger == "weak_attack_after")
+                    && rule.trigger_skill_ids.contains(&skill.id)
+                    && valid_results
+                        .iter()
+                        .any(|result| bool_field(result, "is_weak"))
                 {
                     Some("weak_attack_after")
                 } else if is_skill
-                        && *source_id == actor_id
-                        && rule
-                            .triggers
+                    && *source_id == actor_id
+                    && rule
+                        .triggers
+                        .iter()
+                        .any(|trigger| trigger == "abnormal_attack_after")
+                    && valid_results.iter().any(|result| {
+                        let target_id = i32_field(result, "target_id");
+                        message_list(before, "members")
                             .iter()
-                            .any(|trigger| trigger == "abnormal_attack_after")
-                        && valid_results.iter().any(|result| {
-                            let target_id = i32_field(result, "target_id");
-                            message_list(before, "members")
-                                .iter()
-                                .find(|member| i32_field(member, "member_id") == target_id)
-                                .is_some_and(|target| {
-                                    message_list(target, "state_changes").iter().any(|change| {
-                                        registry().ok().is_some_and(|data| {
-                                            data.abnormal_state_ids.contains(
-                                                &i32_field(change, "state_change_id")
-                                                    .unwrap_or_default(),
-                                            )
-                                        })
+                            .find(|member| i32_field(member, "member_id") == target_id)
+                            .is_some_and(|target| {
+                                message_list(target, "state_changes").iter().any(|change| {
+                                    registry().ok().is_some_and(|data| {
+                                        data.abnormal_state_ids.contains(
+                                            &i32_field(change, "state_change_id")
+                                                .unwrap_or_default(),
+                                        )
                                     })
                                 })
-                        })
+                            })
+                    })
                 {
                     Some("abnormal_attack_after")
                 } else {
@@ -489,30 +492,32 @@ impl Runtime {
         }
         let mut applied = BTreeSet::new();
         for passive in self.passives.iter().filter(|passive| {
-            matches!(passive.rule.operation.as_str(), "party_gauge" | "burst_gauge")
-                && match passive.rule.trigger.as_deref() {
-                    Some("heal_received") => valid_results.iter().any(|result| {
-                        i32_field(result, "target_id") == Some(passive.source)
-                            && message_i32_field(result, "hp_heal", "value").unwrap_or(0) > 0
-                    }),
-                    Some("attacked") => {
-                        skill.skill_effect_type == 1
-                            && valid_results.iter().any(|result| {
-                                i32_field(result, "target_id") == Some(passive.source)
-                            })
-                    }
-                    Some("no_damage_received") => {
-                        skill.skill_effect_type == 1
-                            && skill_results.iter().any(|result| {
-                                !bool_field(result, "is_invalid")
-                                    && i32_field(result, "target_id") == Some(passive.source)
-                                    && message_i64_field(result, "hp_damage", "value")
-                                        .unwrap_or_default()
-                                        <= 0
-                            })
-                    }
-                    _ => false,
+            matches!(
+                passive.rule.operation.as_str(),
+                "party_gauge" | "burst_gauge"
+            ) && match passive.rule.trigger.as_deref() {
+                Some("heal_received") => valid_results.iter().any(|result| {
+                    i32_field(result, "target_id") == Some(passive.source)
+                        && message_i32_field(result, "hp_heal", "value").unwrap_or(0) > 0
+                }),
+                Some("attacked") => {
+                    skill.skill_effect_type == 1
+                        && valid_results
+                            .iter()
+                            .any(|result| i32_field(result, "target_id") == Some(passive.source))
                 }
+                Some("no_damage_received") => {
+                    skill.skill_effect_type == 1
+                        && skill_results.iter().any(|result| {
+                            !bool_field(result, "is_invalid")
+                                && i32_field(result, "target_id") == Some(passive.source)
+                                && message_i64_field(result, "hp_damage", "value")
+                                    .unwrap_or_default()
+                                    <= 0
+                        })
+                }
+                _ => false,
+            }
         }) {
             let key = (
                 passive.source,
@@ -524,12 +529,10 @@ impl Runtime {
                 continue;
             }
             match passive.rule.operation.as_str() {
-                "party_gauge" => {
-                    results.push(apply_party_gauge_passive(proto, state, passive)?)
+                "party_gauge" => results.push(apply_party_gauge_passive(proto, state, passive)?),
+                "burst_gauge" => {
+                    results.push(apply_burst_gauge_passive(proto, rules, state, passive)?)
                 }
-                "burst_gauge" => results.push(apply_burst_gauge_passive(
-                    proto, rules, state, passive,
-                )?),
                 _ => unreachable!(),
             }
         }
@@ -665,7 +668,10 @@ mod tests {
         let mut member = empty_message(&proto, "blend.model.BattleMember").unwrap();
         member.set_field_by_name("member_id", Value::I32(1));
         member.set_field_by_name("ally", Value::Message(ally));
-        assert_eq!(skill_transformation(&member, 12001714).unwrap(), Some((91001369, 12001699)));
+        assert_eq!(
+            skill_transformation(&member, 12001714).unwrap(),
+            Some((91001369, 12001699))
+        );
 
         let mut damage_skill = empty_message(&proto, "blend.model.BattleSkill").unwrap();
         damage_skill.set_field_by_name("skill_id", Value::I32(12002331));

@@ -19,7 +19,11 @@ fn strengthen_removal_covers_all_owners() {
             .unwrap()
             .unwrap();
         assert_eq!(
-            (rule.target.as_str(), rule.phase.as_str(), rule.operation.as_str()),
+            (
+                rule.target.as_str(),
+                rule.phase.as_str(),
+                rule.operation.as_str()
+            ),
             (target, "after", "cleanse_positive")
         );
         assert!(rule.affected_state_ids.is_empty());

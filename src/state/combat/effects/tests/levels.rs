@@ -29,23 +29,16 @@ fn named_levels_increment_to_their_cap_and_use_the_protocol_level_field() {
         (
             91001632,
             2,
-            (12002421..=12002425)
-                .chain(12002602..=12002606)
-                .collect(),
+            (12002421..=12002425).chain(12002602..=12002606).collect(),
             610229,
             2,
         ),
     ] {
         for skill_id in skill_ids {
-            let rule = rule_for_occurrence(
-                effect_id,
-                "active",
-                "skill",
-                skill_id,
-                Some(owner_index),
-            )
-            .unwrap()
-            .unwrap();
+            let rule =
+                rule_for_occurrence(effect_id, "active", "skill", skill_id, Some(owner_index))
+                    .unwrap()
+                    .unwrap();
             assert_eq!(
                 (
                     rule.operation.as_str(),
@@ -66,11 +59,10 @@ fn named_levels_increment_to_their_cap_and_use_the_protocol_level_field() {
             );
         }
     }
-    for (skill_id, base_effect_id, base_index, increment) in
-        (12003833..=12003837)
-            .map(|id| (id, 91002293, 2, 1))
-            .chain((14003838..=14003842).map(|id| (id, 91002294, 2, 2)))
-            .chain(std::iter::once((14003845, 91002295, 3, 5)))
+    for (skill_id, base_effect_id, base_index, increment) in (12003833..=12003837)
+        .map(|id| (id, 91002293, 2, 1))
+        .chain((14003838..=14003842).map(|id| (id, 91002294, 2, 2)))
+        .chain(std::iter::once((14003845, 91002295, 3, 5)))
     {
         let base = rule_for_occurrence(
             base_effect_id,
@@ -148,7 +140,11 @@ fn named_levels_increment_to_their_cap_and_use_the_protocol_level_field() {
         .find(|member| member_type(member).ok() == Some(1))
         .and_then(|member| i32_field(member, "member_id"))
         .unwrap();
-    let skill = rules.skills.iter().find(|skill| skill.id == 12000992).unwrap();
+    let skill = rules
+        .skills
+        .iter()
+        .find(|skill| skill.id == 12000992)
+        .unwrap();
     let mut last_results = Vec::new();
     for action_number in 1..=12 {
         last_results = runtime
@@ -198,16 +194,17 @@ fn named_levels_increment_to_their_cap_and_use_the_protocol_level_field() {
         .find(|member| member_id(member).ok() == Some(actor_id))
         .unwrap();
     let mut ally = member_status(actor, "ally").unwrap();
-    ally.set_field_by_name(
-        "character_id",
-        Value::I32(marker.source_character_ids[0]),
-    );
+    ally.set_field_by_name("character_id", Value::I32(marker.source_character_ids[0]));
     actor.set_field_by_name("ally", Value::Message(ally));
     state.set_field_by_name(
         "members",
         Value::List(members.into_iter().map(Value::Message).collect()),
     );
-    let lichtlumen = rules.skills.iter().find(|skill| skill.id == 12003833).unwrap();
+    let lichtlumen = rules
+        .skills
+        .iter()
+        .find(|skill| skill.id == 12003833)
+        .unwrap();
     runtime
         .apply_for_action_with_rules(
             &proto,
@@ -254,7 +251,11 @@ fn named_levels_increment_to_their_cap_and_use_the_protocol_level_field() {
         .unwrap();
     assert_eq!(level(&state, actor_id, 610517), Some(3));
 
-    let yellow_crystal = rules.skills.iter().find(|skill| skill.id == 14003260).unwrap();
+    let yellow_crystal = rules
+        .skills
+        .iter()
+        .find(|skill| skill.id == 14003260)
+        .unwrap();
     let before_power = state_change_summary_value(&member(&state, actor_id), 4);
     let before_critical = state_change_summary_value(&member(&state, actor_id), 6);
     for action_number in 15..=17 {

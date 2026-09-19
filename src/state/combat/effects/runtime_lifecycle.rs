@@ -8,6 +8,20 @@ use crate::state::combat::prelude::*;
 use std::collections::{BTreeMap, BTreeSet};
 
 impl Runtime {
+    fn register_nested_enemy(&mut self, source: i32, enemy_id: i32) -> Result<(), StateError> {
+        for rule in registry()?.nested_actions.iter().filter(|rule| {
+            rule.owner_type == "ability" && rule.source_enemy_ids.contains(&enemy_id)
+        }) {
+            self.nested_actions.push(NestedActionInstance {
+                source,
+                target: source,
+                remaining: rule.duration,
+                rule: rule.clone(),
+            });
+        }
+        Ok(())
+    }
+
     fn register_nested_ability(&mut self, source: i32, ability_id: i32) -> Result<(), StateError> {
         for rule in registry()?
             .nested_actions
@@ -41,24 +55,13 @@ impl Runtime {
         leader: bool,
     ) -> Result<(), StateError> {
         if is_lamp_ability_effect(ability_id, effect.id)?
-            || rule_for_occurrence(
-                effect.id,
-                "catalog",
-                "ability",
-                ability_id,
-                effect_index,
-            )?
-            .is_some()
+            || rule_for_occurrence(effect.id, "catalog", "ability", ability_id, effect_index)?
+                .is_some()
         {
             return Ok(());
         }
-        let Some(rule) = rule_for_occurrence(
-            effect.id,
-            "passive",
-            "ability",
-            ability_id,
-            effect_index,
-        )?
+        let Some(rule) =
+            rule_for_occurrence(effect.id, "passive", "ability", ability_id, effect_index)?
         else {
             self.unsupported.insert(effect.id);
             return Ok(());
@@ -352,6 +355,10 @@ impl Runtime {
             if self.bases.contains_key(&id) {
                 continue;
             }
+            if member_type(&member)? == 1 {
+                let enemy_id = enemy_member_status_enemy_id(&member)?;
+                self.register_nested_enemy(id, enemy_id)?;
+            }
             let status = member_status(&member, "current_status")?;
             let stats = status
                 .fields()
@@ -406,15 +413,33 @@ impl Runtime {
                     "attack" | "magic" | "defense" | "mental" | "speed" => {
                         *stat_rates.entry(rule.operation.clone()).or_default() += i64::from(value);
                     }
-                    "physical_taken" | "magic_taken" | "taken_down" | "attribute_taken"
-                    | "panel_disable" | "panel_convert" | "panel_potency"
-                    | "healing" | "healing_received"
-                    | "regeneration" | "negative_immunity" | "abnormal_immunity"
-                    | "positive_immunity" | "negative_potency" | "positive_potency"
-                    | "given_negative_potency" | "given_positive_potency"
-                    | "damage_immunity" | "cover" | "cleanse_positive" | "reflection"
-                    | "evasion" | "abnormal_resistance" | "target_rate" | "status"
-                    | "initiative" | "marker" => (), // read at use sites
+                    "physical_taken"
+                    | "magic_taken"
+                    | "taken_down"
+                    | "attribute_taken"
+                    | "panel_disable"
+                    | "panel_convert"
+                    | "panel_potency"
+                    | "healing"
+                    | "healing_received"
+                    | "regeneration"
+                    | "negative_immunity"
+                    | "abnormal_immunity"
+                    | "positive_immunity"
+                    | "negative_potency"
+                    | "positive_potency"
+                    | "given_negative_potency"
+                    | "given_positive_potency"
+                    | "damage_immunity"
+                    | "cover"
+                    | "cleanse_positive"
+                    | "reflection"
+                    | "evasion"
+                    | "abnormal_resistance"
+                    | "target_rate"
+                    | "status"
+                    | "initiative"
+                    | "marker" => (), // read at use sites
                     _ => return Err(StateError::InvalidRequest),
                 }
                 Ok(())
