@@ -643,6 +643,12 @@ impl Runtime {
                 for target_index in 0..members.len() {
                     if !bool_field(&members[target_index], "is_alive")
                         || !selected(rule, &source, &members[target_index], targets)
+                        || (rule.target_broken
+                            && (!requested_targets
+                                .contains(&member_id(&members[target_index]).unwrap_or_default())
+                                || member_status(&members[target_index], "enemy")
+                                    .ok()
+                                    .is_none_or(|enemy| !bool_field(&enemy, "is_broken"))))
                     {
                         continue;
                     }
