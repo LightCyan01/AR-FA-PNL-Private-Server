@@ -180,3 +180,53 @@ fn named_level_thresholds_drive_damage_healing_and_cleanup() {
         0
     );
 }
+
+#[test]
+fn elegant_fragrance_scopes_and_gates_slashing_attack_buffs() {
+    let base = rule_for(91002356, "active", "skill", 12003960)
+        .unwrap()
+        .unwrap();
+    let gated = rule_for(91002357, "active", "skill", 12003960)
+        .unwrap()
+        .unwrap();
+    assert!(base.target_character_ids.contains(&10701));
+    assert!(!base.target_character_ids.contains(&10101));
+    assert_eq!(gated.target_character_ids, base.target_character_ids);
+    assert_eq!(gated.source_state_ids.as_slice(), [610545].as_slice());
+    assert_eq!(gated.source_state_level_min, 30);
+
+    let grant = rule_for_occurrence(91002358, "active", "skill", 14003965, Some(2))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            grant.target.as_str(),
+            grant.operation.as_str(),
+            grant.fixed,
+            grant.state_id,
+            grant.stack_cap,
+        ),
+        ("allies", "level_state", Some(3), 610545, 50)
+    );
+
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let mut source = empty_message(&proto, "blend.model.BattleMember").unwrap();
+    source.set_field_by_name(
+        "state_changes",
+        Value::List(vec![Value::Message(
+            super::super::runtime_results::level_display(&proto, 610545, 29, -1).unwrap(),
+        )]),
+    );
+    assert!(!super::super::runtime_match::condition(gated, &source));
+    source.set_field_by_name(
+        "state_changes",
+        Value::List(vec![Value::Message(
+            super::super::runtime_results::level_display(&proto, 610545, 30, -1).unwrap(),
+        )]),
+    );
+    assert!(super::super::runtime_match::condition(gated, &source));
+}
