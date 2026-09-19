@@ -311,6 +311,7 @@ impl Runtime {
                 .retain(|action| allies.contains(&action.target));
             self.extra_skills.retain(|id, _| allies.contains(id));
             self.extra_turn_uses.retain(|id, _| allies.contains(id));
+            self.limited_effect_uses.retain(|id, _| allies.contains(id));
             self.pending_extra_turns.clear();
             self.panel_damage_taken.retain(|id, _| allies.contains(id));
             self.pending_actor = 0;

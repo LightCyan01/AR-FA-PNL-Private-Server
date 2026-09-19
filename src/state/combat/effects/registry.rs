@@ -203,6 +203,8 @@ pub(crate) struct Rule {
     #[serde(default)]
     pub(crate) stack_cap: i32,
     #[serde(default)]
+    pub(crate) stack_limit: usize,
+    #[serde(default)]
     pub(crate) level_modifiers: Vec<LevelModifier>,
     #[serde(default)]
     pub(crate) source_side_count_min: i32,
@@ -436,7 +438,7 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                             | "cleanse_positive"
                     ))
                 || (r.operation == "panel_convert"
-                    && (r.panel_to_id <= 0 || r.panel_from_ids.is_empty()))
+                    && (r.panel_to_id <= 0 || r.panel_from_ids.is_empty() || r.trigger_limit < 0))
                 || (r.operation == "field_effect" && r.fixed.is_none_or(|id| id <= 0))
                 || (r.operation == "summons" && r.fixed.is_none_or(|id| id <= 0))
                 || (r.operation == "skill_form" && r.fixed.is_some_and(|id| id <= 0))

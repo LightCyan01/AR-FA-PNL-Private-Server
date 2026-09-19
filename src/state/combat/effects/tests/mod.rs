@@ -14,6 +14,7 @@ mod maintenance;
 mod modifiers;
 mod nested;
 mod panels;
+mod sacrifice;
 mod passive_shapes;
 mod penetration;
 mod pile;

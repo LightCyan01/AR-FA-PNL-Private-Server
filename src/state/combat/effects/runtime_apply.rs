@@ -15,7 +15,6 @@ use super::runtime_resources::{add_burst_gauge, add_party_gauge};
 use super::runtime_scaling::{party_tag_count, scaled_effect_value};
 use super::runtime_targeting::resolved_targets;
 use crate::state::combat::prelude::*;
-use std::collections::BTreeSet;
 
 impl Runtime {
     #[allow(clippy::too_many_arguments)]
@@ -377,83 +376,9 @@ impl Runtime {
                 if rule.target_broken && !requested_target_broken {
                     continue;
                 }
-                let context = panel_context.unwrap_or(state);
-                let context_members = message_list(context, "members");
-                let units = message_list(context, "timeline_units");
-                let context_panels = message_list(context, "timeline_panels");
-                let target_ids = if rule.target == "next_enemy" {
-                    units
-                        .iter()
-                        .skip(usize::from(phase == "after"))
-                        .filter_map(|unit| member_id(unit).ok())
-                        .find(|id| {
-                            context_members.iter().any(|member| {
-                                member_id(member).ok() == Some(*id)
-                                    && member_type(member).ok() == Some(1)
-                                    && bool_field(member, "is_alive")
-                            })
-                        })
-                        .into_iter()
-                        .collect()
-                } else {
-                    members
-                        .iter()
-                        .filter(|member| {
-                            bool_field(member, "is_alive")
-                                && selected(rule, &source, member, targets)
-                        })
-                        .map(member_id)
-                        .collect::<Result<Vec<_>, _>>()?
-                };
-                let mut panels = message_list(state, "timeline_panels");
-                for target_id in target_ids {
-                    let turns = context_panels
-                        .iter()
-                        .zip(&units)
-                        .skip(usize::from(phase == "after"))
-                        .filter_map(|(panel, unit)| {
-                            (member_id(unit).ok() == Some(target_id)
-                                && rule
-                                    .panel_from_ids
-                                    .contains(&optional_i32_field(panel, "panel_id").unwrap_or(11)))
-                            .then(|| i32_field(panel, "turn"))?
-                        })
-                        .take(if rule.panel_limit == 0 {
-                            usize::MAX
-                        } else {
-                            rule.panel_limit
-                        })
-                        .collect::<BTreeSet<_>>();
-                    let mut overwritten = Vec::new();
-                    for panel in &mut panels {
-                        if !i32_field(panel, "turn").is_some_and(|turn| turns.contains(&turn)) {
-                            continue;
-                        }
-                        let turn = i32_field(panel, "turn").ok_or(StateError::InvalidRequest)?;
-                        *panel = build_timeline_panel(proto, rule.panel_to_id, turn)?;
-                        overwritten.push(Value::Message(panel.clone()));
-                    }
-                    if !overwritten.is_empty() {
-                        let mut result = effect_result(
-                            proto,
-                            effect.id,
-                            source_id,
-                            target_id,
-                            is_skill,
-                            rule,
-                            effect.value,
-                        )?;
-                        result.set_field_by_name(
-                            "overwritten_timeline_panels",
-                            Value::List(overwritten),
-                        );
-                        results.push(result);
-                    }
-                }
-                state.set_field_by_name(
-                    "timeline_panels",
-                    Value::List(panels.into_iter().map(Value::Message).collect()),
-                );
+                results.extend(self.convert_panels(
+                    proto, state, &source, &members, targets, effect, is_skill, rule, panel_context,
+                )?);
                 continue;
             }
             if rule.operation == "extra_turn" {
@@ -978,6 +903,19 @@ impl Runtime {
                         })
             }) {
                 let target_id = member_id(target)?;
+                if rule.stack_limit > 0
+                    && self
+                        .instances
+                        .iter()
+                        .filter(|instance| {
+                            instance.source == source_id
+                                && instance.target == target_id
+                                && instance.rule.id == rule.id
+                        })
+                        .count() >= rule.stack_limit
+                {
+                    continue;
+                }
                 if state_application_blocked(target, rule)? {
                     results.push(status_effect_result(
                         proto, effect.id, source_id, target_id, is_skill, rule, value, 4,
@@ -998,13 +936,15 @@ impl Runtime {
                 } else {
                     value
                 };
-                self.instances.retain(|instance| {
-                    !(instance.target == target_id && if rule.operation == "panel_potency" {
-                        instance.rule.operation == "panel_potency"
-                    } else {
-                        instance.source == source_id && instance.rule.id == rule.id
-                    })
-                });
+                if rule.stack_limit == 0 {
+                    self.instances.retain(|instance| {
+                        !(instance.target == target_id && if rule.operation == "panel_potency" {
+                            instance.rule.operation == "panel_potency"
+                        } else {
+                            instance.source == source_id && instance.rule.id == rule.id
+                        })
+                    });
+                }
                 let source_character_id =
                     message_i32_field(&source, "ally", "character_id").unwrap_or_default();
                 for instance_rule in std::iter::once(rule).chain(extra_rules.iter()) {

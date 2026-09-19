@@ -70,6 +70,7 @@ pub(crate) struct Runtime {
     pub(crate) nested_actions: Vec<NestedActionInstance>,
     pub(crate) extra_skills: BTreeMap<i32, BTreeMap<i32, i32>>,
     pub(crate) extra_turn_uses: BTreeMap<i32, BTreeMap<i32, i32>>,
+    pub(crate) limited_effect_uses: BTreeMap<i32, BTreeMap<i32, i32>>,
     #[serde(skip)]
     pub(super) pending_extra_turns: Vec<PendingExtraTurn>,
     pub(crate) managed: BTreeMap<i32, BTreeSet<i32>>,
