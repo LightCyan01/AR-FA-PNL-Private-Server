@@ -412,7 +412,7 @@ impl Runtime {
                     | "regeneration" | "negative_immunity" | "abnormal_immunity"
                     | "positive_immunity" | "negative_potency" | "positive_potency"
                     | "given_negative_potency" | "given_positive_potency"
-                    | "damage_immunity" | "cover" | "cleanse_positive"
+                    | "damage_immunity" | "cover" | "cleanse_positive" | "reflection"
                     | "evasion" | "abnormal_resistance" | "target_rate" | "status"
                     | "initiative" | "marker" => (), // read at use sites
                     _ => return Err(StateError::InvalidRequest),

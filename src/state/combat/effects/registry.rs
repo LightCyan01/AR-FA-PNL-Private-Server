@@ -406,6 +406,7 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                         | "cleanse_abnormal"
                         | "cleanse_positive"
                         | "regeneration"
+                        | "reflection"
                         | "negative_immunity"
                         | "negative_potency"
                         | "positive_potency"
@@ -585,7 +586,8 @@ pub(crate) fn validate(source_hash: &str) -> Result<(), StateError> {
                 || r.trigger.as_deref().is_some_and(|trigger| {
                     !matches!(
                         trigger,
-                        "attack_after"
+                        "attack_before"
+                            | "attack_after"
                             | "action_after"
                             | "party_tool_after"
                             | "battle_start"

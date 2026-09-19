@@ -524,16 +524,24 @@ fn resolve_skill_action(
         None
     };
     let cancelled = special_counter.is_some();
-    let mut before_effect_results = if cancelled {
-        Vec::new()
-    } else {
+    let mut before_effect_results = Vec::new();
+    if !cancelled {
+        if tools.is_none() {
+            before_effect_results.extend(runtime.trigger_attack_before(
+                proto,
+                state,
+                actor_id,
+                effective_skill,
+                &effect_target_ids,
+            )?);
+        }
         if let Some((effect_id, _)) = transformation {
             let form_effects = source_effects
                 .iter()
                 .filter(|effect| effect.id == effect_id)
                 .cloned()
                 .collect::<Vec<_>>();
-            runtime.apply_for_action_with_rules(
+            before_effect_results.extend(runtime.apply_for_action_with_rules(
                 proto,
                 rules,
                 state,
@@ -548,12 +556,8 @@ fn resolve_skill_action(
                 secret,
                 transaction,
                 action_number,
-            )?
-        } else {
-            Vec::new()
+            )?);
         }
-    };
-    if !cancelled {
         before_effect_results.extend(runtime.apply_for_action_with_rules(
             proto,
             rules,
@@ -571,7 +575,7 @@ fn resolve_skill_action(
             action_number,
         )?);
     }
-    let (skill_results, mut timeline_moves, total_damage) = apply_attack_results(
+    let (mut skill_results, mut timeline_moves, total_damage) = apply_attack_results(
         proto,
         rules,
         state,
@@ -590,7 +594,27 @@ fn resolve_skill_action(
         transaction,
         action_number,
     )?;
+    let reflection_results = if !cancelled && tools.is_none() {
+        let (results, movements) = runtime.reflect_magic_damage(
+            proto,
+            state,
+            actor_id,
+            effective_skill,
+            &skill_results,
+        )?;
+        timeline_moves.extend(movements);
+        results
+    } else {
+        Vec::new()
+    };
     for target_id in skill_results
+        .iter()
+        .filter(|result| bool_field(result, "is_killed"))
+        .filter_map(|result| i32_field(result, "target_id"))
+    {
+        runtime.discard_extra_turns(target_id);
+    }
+    for target_id in reflection_results
         .iter()
         .filter(|result| bool_field(result, "is_killed"))
         .filter_map(|result| i32_field(result, "target_id"))
@@ -674,6 +698,7 @@ fn resolve_skill_action(
     }
     timeline_moves.extend(runtime.apply_pending_extra_turns(proto, state)?);
     runtime.refresh(proto, state)?;
+    skill_results.extend(reflection_results);
     Ok(ResolvedSkillAction {
         skill_results,
         before_effect_results,
