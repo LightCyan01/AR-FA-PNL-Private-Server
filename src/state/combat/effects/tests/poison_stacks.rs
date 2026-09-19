@@ -41,9 +41,7 @@ fn repeated_poison_uses_pre_action_abnormal_state() {
         .find(|skill| skill.id == 22001879)
         .unwrap();
 
-    for (skill_id, first_duration, extra_duration) in
-        [(22001879, 3, 2), (32004186, 3, 3)]
-    {
+    for (skill_id, first_duration, extra_duration) in [(22001879, 3, 2), (32004186, 3, 3)] {
         let first = rule_for(780056012, "active", "skill", skill_id)
             .unwrap()
             .unwrap();
@@ -120,4 +118,23 @@ fn repeated_poison_uses_pre_action_abnormal_state() {
         .count(),
         6
     );
+}
+
+#[test]
+fn battle_start_poison_registers_every_stack() {
+    for index in 0..10 {
+        let rule = rule_for_occurrence(120010135, "passive", "ability", 600010070, Some(index))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (
+                rule.operation.as_str(),
+                rule.target.as_str(),
+                rule.state_id,
+                &rule.expiry,
+                rule.duration,
+            ),
+            ("status", "self", 940007, &Expiry::Turn, 5)
+        );
+    }
 }
