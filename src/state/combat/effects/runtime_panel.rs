@@ -16,6 +16,23 @@ pub(super) fn scale_panel_value(value: i32, rate: i128) -> i32 {
 }
 
 impl Runtime {
+    pub(super) fn effective_panel_id(
+        &self,
+        state: &DynamicMessage,
+    ) -> Result<i32, StateError> {
+        let panel_id = current_panel_id(state);
+        let actor_id = member_id(&current_actor(state)?)?;
+        if self.instances.iter().any(|instance| {
+            instance.target == actor_id
+                && instance.rule.operation == "panel_disable"
+                && !instance.rule.panel_from_ids.is_empty()
+                && instance.rule.panel_from_ids.contains(&panel_id)
+        }) {
+            return Ok(11);
+        }
+        Ok(effective_battle_panel_id(state))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn convert_panels(
         &mut self,
@@ -127,7 +144,7 @@ impl Runtime {
     pub(super) fn panel_effect_rate(&self, state: &DynamicMessage) -> Result<i128, StateError> {
         if !registry()?
             .enhancement_panel_ids
-            .contains(&effective_battle_panel_id(state))
+            .contains(&self.effective_panel_id(state)?)
         {
             return Ok(10_000);
         }
@@ -160,6 +177,9 @@ impl Runtime {
         &self,
         state: &DynamicMessage,
     ) -> Result<(i128, i128), StateError> {
+        if self.effective_panel_id(state)? == 11 {
+            return Ok((100, 100));
+        }
         let (numerator, denominator) = battle_panel_multiplier(state);
         let bonus = (numerator - denominator) * self.panel_effect_rate(state)? / 10_000;
         Ok((denominator + bonus, denominator))
@@ -169,6 +189,9 @@ impl Runtime {
         &self,
         state: &DynamicMessage,
     ) -> Result<i128, StateError> {
+        if self.effective_panel_id(state)? == 11 {
+            return Ok(100);
+        }
         let base = battle_panel_break_multiplier(state);
         Ok(100 + (base - 100) * self.panel_effect_rate(state)? / 10_000)
     }
@@ -178,9 +201,21 @@ impl Runtime {
         state: &DynamicMessage,
         actor_id: i32,
     ) -> Result<(), StateError> {
+        let panel_id = current_panel_id(state);
+        for instance in self.instances.iter_mut().filter(|instance| {
+            instance.target == actor_id
+                && instance.rule.operation == "panel_disable"
+                && !instance.rule.panel_from_ids.is_empty()
+                && instance.rule.panel_from_ids.contains(&panel_id)
+        }) {
+            if instance.remaining > 0 {
+                instance.remaining -= 1;
+            }
+        }
+        self.instances.retain(|instance| instance.remaining != 0);
         if !registry()?
             .enhancement_panel_ids
-            .contains(&effective_battle_panel_id(state))
+            .contains(&self.effective_panel_id(state)?)
         {
             return Ok(());
         }

@@ -298,6 +298,79 @@ fn panel_disable_suppresses_non_burst_panel_for_one_target_turn() {
 }
 
 #[test]
+fn negative_panel_immunity_consumes_only_negative_panels() {
+    let proto = ProtoRegistry::from_file(Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../schemas/atelier-resleriana-2.16.0.protoset"
+    )))
+    .unwrap();
+    let rules = load_gameplay_rules().unwrap();
+    let fresh = load_fresh_rules().unwrap();
+    let resources = reduce_talk_event(
+        &proto,
+        &fresh,
+        &rules,
+        starter_resources(&proto, &fresh).unwrap(),
+        101001001,
+        1,
+    )
+    .unwrap()
+    .resources;
+    let start = reduce_battle_start(&proto, &rules, resources, 101001002, 1).unwrap();
+    let mut state = start.state;
+    let actor_id = member_id(&current_actor(&state).unwrap()).unwrap();
+    let mut runtime = start.effects;
+    runtime.passives.clear();
+    runtime.instances.clear();
+    runtime.managed.clear();
+    runtime.refresh(&proto, &mut state).unwrap();
+
+    assert_eq!(
+        runtime
+            .apply(
+                &proto,
+                &mut state,
+                actor_id,
+                &[TutorialSkillEffect {
+                    id: 76150005,
+                    value: 0,
+                }],
+                &[actor_id],
+                true,
+                "after",
+                None,
+            )
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(runtime.instances.iter().any(|instance| {
+        instance.rule.state_id == 510048 && instance.remaining == 2
+    }));
+
+    set_timeline_panels(&proto, &mut state, &[13], 1, 100).unwrap();
+    assert_eq!(runtime.panel_multiplier(&state).unwrap(), (100, 100));
+    runtime.consume_panel_potency(&state, actor_id).unwrap();
+    assert!(runtime.instances.iter().any(|instance| {
+        instance.rule.state_id == 510048 && instance.remaining == 1
+    }));
+
+    set_timeline_panels(&proto, &mut state, &[12], 1, 101).unwrap();
+    runtime.consume_panel_potency(&state, actor_id).unwrap();
+    assert!(runtime.instances.iter().any(|instance| {
+        instance.rule.state_id == 510048 && instance.remaining == 1
+    }));
+
+    set_timeline_panels(&proto, &mut state, &[26], 1, 102).unwrap();
+    assert_eq!(runtime.panel_multiplier(&state).unwrap(), (100, 100));
+    runtime.consume_panel_potency(&state, actor_id).unwrap();
+    assert!(!runtime.instances.iter().any(|instance| {
+        instance.rule.state_id == 510048
+    }));
+    assert_eq!(runtime.panel_multiplier(&state).unwrap(), (40, 100));
+}
+
+#[test]
 fn offensive_panel_policy_matches_master_data() {
     let proto = ProtoRegistry::from_file(Path::new(concat!(
         env!("CARGO_MANIFEST_DIR"),

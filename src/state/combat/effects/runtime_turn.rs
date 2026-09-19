@@ -275,7 +275,7 @@ impl Runtime {
             }
         }
         let actor_type = member_type(&current_actor(state)?)?;
-        let panel_id = effective_battle_panel_id(state);
+        let panel_id = self.effective_panel_id(state)?;
         let mut members = message_list(state, "members");
         for member in members.iter_mut().filter(|member| {
             member_type(member).ok() == Some(actor_type) && bool_field(member, "is_alive")
