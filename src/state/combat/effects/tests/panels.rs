@@ -48,6 +48,48 @@ fn shared_enemy_panel_rules_keep_catalog_target_and_limit() {
 }
 
 #[test]
+fn burn_panel_conversion_covers_every_authoritative_variant() {
+    for skill_id in [22000155, 30000078, 32001597] {
+        let rule = rule_for(71142001, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (rule.target.as_str(), rule.panel_to_id, rule.panel_limit),
+            ("targets", 45, 10)
+        );
+        assert_eq!(rule.panel_from_ids.len(), 14);
+        assert!(rule.panel_from_ids.contains(&11));
+        assert!(rule.panel_from_ids.contains(&45));
+        assert!(!rule.panel_from_ids.contains(&12));
+    }
+    for skill_id in [22001622, 32003846, 32004879, 32004983, 32005229] {
+        let rule = rule_for(71142001, "active", "skill", skill_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            (rule.panel_from_ids.as_slice(), rule.panel_to_id, rule.panel_limit),
+            ([11, 13, 26].as_slice(), 45, 10)
+        );
+    }
+
+    let all = rule_for(71142001, "active", "skill", 32002591)
+        .unwrap()
+        .unwrap();
+    assert_eq!((all.panel_from_ids.len(), all.panel_limit), (30, 1));
+    let negative = rule_for(71142001, "active", "skill", 32002748)
+        .unwrap()
+        .unwrap();
+    assert_eq!((negative.panel_from_ids.len(), negative.panel_limit), (14, 1));
+    let empty = rule_for(71142001, "active", "skill", 32003110)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (empty.panel_from_ids.as_slice(), empty.panel_limit),
+        ([11].as_slice(), 1)
+    );
+}
+
+#[test]
 fn tagged_ally_and_target_panel_rules_split_recipients() {
     for (skill_id, limit) in [(12003765, 1), (14003770, 0)] {
         let allies = rule_for(91002247, "active", "skill", skill_id)
