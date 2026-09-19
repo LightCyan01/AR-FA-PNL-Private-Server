@@ -74,6 +74,13 @@ fn attribute_or_tag_support_buffs_apply_each_modifier_once() {
             .target_character_ids
             .iter()
             .all(|id| !tag_critical.target_character_ids.contains(id)));
+
+        let broken_magic = rule(91002053, skill_id);
+        assert_eq!(broken_magic.operation, "magic");
+        assert_eq!(broken_magic.target, "allies");
+        assert!(broken_magic.target_broken);
+        assert!(broken_magic.include_source);
+        assert!(!broken_magic.target_character_ids.is_empty());
     }
 }
 
