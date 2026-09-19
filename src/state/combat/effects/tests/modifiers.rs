@@ -538,7 +538,6 @@ fn common_active_modifiers_change_only_their_declared_buckets() {
     }
     for (effect_id, skill_id) in [
         (71212004, 22001466),
-        (780045014, 20007180),
         (780048001, 20001686),
     ] {
         assert!(rule_for(effect_id, "active", "skill", skill_id)
@@ -604,6 +603,35 @@ fn common_active_modifiers_change_only_their_declared_buckets() {
         member
     };
     let mut source = member(1, 0);
+    let role_rule = rule_for(780045014, "active", "skill", 20007180)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            role_rule.operation.as_str(),
+            role_rule.summary,
+            role_rule.target.as_str(),
+            role_rule.sign,
+            &role_rule.expiry,
+            role_rule.duration,
+        ),
+        ("summary", 6, "targets", -1, &Expiry::Turn, 1)
+    );
+    let role_target = |member_id, character_id| {
+        let mut target = member(member_id, 0);
+        let mut ally = empty_message(&proto, "blend.model.BattleAlly").unwrap();
+        ally.set_field_by_name("character_id", Value::I32(character_id));
+        target.set_field_by_name("ally", Value::Message(ally));
+        target
+    };
+    let supporter = role_target(3, role_rule.target_character_ids[0]);
+    let attacker_id = rule_for(780045001, "active", "skill", 20007180)
+        .unwrap()
+        .unwrap()
+        .target_character_ids[0];
+    let attacker = role_target(4, attacker_id);
+    assert!(selected(role_rule, &source, &supporter, &[3]));
+    assert!(!selected(role_rule, &source, &attacker, &[4]));
     assert!(super::super::runtime_match::condition(
         conditional_immunity,
         &source,

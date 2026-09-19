@@ -96,10 +96,8 @@ fn triggered_item_gauge_rules_follow_their_catalog_events() {
         .iter()
         .find(|skill| skill.skill_effect_type == 1)
         .unwrap();
-    let passive = |effect_id, ability_id, owner_index, value| Passive {
-        source: actor_id,
-        value,
-        rule: rule_for_occurrence(
+    let passive = |effect_id, ability_id, owner_index, value| {
+        let rule = rule_for_occurrence(
             effect_id,
             "passive",
             "ability",
@@ -108,9 +106,14 @@ fn triggered_item_gauge_rules_follow_their_catalog_events() {
         )
         .unwrap()
         .unwrap()
-        .clone(),
-        source_character_id: 0,
-        source_type: 0,
+        .clone();
+        Passive {
+            source: actor_id,
+            value,
+            source_character_id: rule.source_character_ids.first().copied().unwrap_or(0),
+            source_type: 0,
+            rule,
+        }
     };
     let expected = |value| catalog.max_party_gauge * value / 10_000;
     let mut runtime = Runtime::default();
@@ -142,11 +145,37 @@ fn triggered_item_gauge_rules_follow_their_catalog_events() {
             &before,
             actor_id,
             skill,
-            &[attacked],
+            &[attacked.clone()],
             true,
         )
         .unwrap();
     assert_eq!(i32_field(&state, "party_gauge"), Some(expected(500)));
+
+    let mut members = message_list(&state, "members");
+    let actor = members
+        .iter_mut()
+        .find(|member| member_id(member).ok() == Some(actor_id))
+        .unwrap();
+    let maximum = i32_field(actor, "max_hp").unwrap();
+    actor.set_field_by_name("hp", Value::I32(maximum / 2));
+    state.set_field_by_name(
+        "members",
+        Value::List(members.into_iter().map(Value::Message).collect()),
+    );
+    runtime.passives = vec![passive(500050, 500442, Some(0), 500)];
+    let first = runtime
+        .trigger_attack_after(&proto, &rules, &mut state, actor_id, skill, &[attacked.clone()])
+        .unwrap();
+    let first_hp = message_list(&state, "members")
+        .into_iter()
+        .find(|member| member_id(member).ok() == Some(actor_id))
+        .and_then(|member| i32_field(&member, "hp"))
+        .unwrap();
+    let second = runtime
+        .trigger_attack_after(&proto, &rules, &mut state, actor_id, skill, &[attacked])
+        .unwrap();
+    assert!(first_hp > maximum / 2);
+    assert_eq!((first.len(), second.len()), (1, 0));
 
     let healed = build_skill_result(
         &proto, actor_id, 0, 0, 1, 0, false, false, false, false, false, false, false,

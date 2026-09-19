@@ -5,6 +5,7 @@ mod cover;
 mod critical_status;
 mod critical_triggers;
 mod extra_turn;
+mod immunity;
 mod initiative;
 mod legacy_modifiers;
 mod level_conditions;

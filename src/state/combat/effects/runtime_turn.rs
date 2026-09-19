@@ -331,7 +331,8 @@ impl Runtime {
         let source_type = member_type(source)?;
         let mut triggered = Vec::new();
         let mut applied = BTreeSet::new();
-        for passive in self.passives.clone().into_iter().filter(|passive| {
+        let passives = self.passives.clone();
+        for passive in passives.iter().filter(|passive| {
             match passive.rule.trigger.as_deref() {
                 Some("action_after") => match passive.rule.target.as_str() {
                     "self" => passive.source == source_id,
@@ -394,11 +395,60 @@ impl Runtime {
         let hit_results = results
             .iter()
             .filter(|result| !bool_field(result, "is_miss") && !bool_field(result, "is_invalid"));
+        let attacked = hit_results
+            .clone()
+            .filter_map(|result| i32_field(result, "target_id"))
+            .collect::<BTreeSet<_>>();
+        let mut applied_attacked = BTreeSet::new();
+        for passive in passives.iter().filter(|passive| {
+            passive.rule.operation == "heal"
+                && passive.rule.trigger.as_deref() == Some("attacked")
+                && attacked.contains(&passive.source)
+        }) {
+            let Some(target) = members
+                .iter()
+                .find(|member| member_id(member).ok() == Some(passive.source))
+            else {
+                continue;
+            };
+            if !bool_field(target, "is_alive")
+                || (!passive.rule.source_character_ids.is_empty()
+                    && !passive
+                        .rule
+                        .source_character_ids
+                        .contains(&passive.source_character_id))
+                || !condition(&passive.rule, target)
+                || !applied_attacked.insert((
+                    passive.source,
+                    passive.rule.owner_id,
+                    passive.rule.id,
+                ))
+            {
+                continue;
+            }
+            let uses = self
+                .limited_effect_uses
+                .entry(passive.source)
+                .or_default()
+                .entry(passive.rule.owner_id)
+                .or_default();
+            if passive.rule.trigger_limit > 0 && *uses >= passive.rule.trigger_limit {
+                continue;
+            }
+            triggered.extend(heal_self(
+                proto,
+                state,
+                passive.source,
+                passive.rule.id,
+                passive.value,
+            )?);
+            *uses = uses.checked_add(1).ok_or(StateError::InvalidRequest)?;
+        }
         let critical = hit_results
             .clone()
             .any(|result| bool_field(result, "is_critical"));
         let mut refreshed_self = BTreeSet::new();
-        for passive in self.passives.clone().into_iter().filter(|passive| {
+        for passive in passives.iter().filter(|passive| {
             passive.source == source_id && passive.rule.trigger.as_deref() == Some("attack_after")
         }) {
             if passive.rule.operation == "heal" {
